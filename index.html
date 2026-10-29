@@ -1,0 +1,1901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Vowel Formant Tracker — F1/F2 vs. Native Speakers</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1f2430;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --ref-m: #2563eb;   /* male reference */
+    --ref-w: #7c3aed;   /* female reference */
+    --user: #fb7185;    /* user's tongue / production */
+    --good: #16a34a;
+    --warn: #d97706;
+    --bad: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.45;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: .92rem; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button {
+    font: inherit;
+    border: 1px solid var(--line);
+    background: #fff;
+    border-radius: 9px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  button:hover { background: #f3f4f6; }
+  button.primary {
+    background: #1d4ed8; color: #fff; border-color: #1d4ed8; font-weight: 600;
+  }
+  button.primary:hover { background: #1e40af; }
+  button.primary.running { background: #dc2626; border-color: #dc2626; }
+  button.primary.running:hover { background: #b91c1c; }
+  button.active { border-color: #1d4ed8; color: #1d4ed8; font-weight: 600; background: #eff6ff; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; }
+  .seg button + button { border-left: 1px solid var(--line); }
+
+  .label { font-size: .8rem; color: var(--muted); margin-right: 2px; }
+  input[type="range"] { vertical-align: middle; }
+  .hint { color: var(--muted); font-size: .8rem; }
+
+  canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .85rem; color: var(--muted); margin-top: 10px; }
+  .legend .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+
+  .readout { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; }
+  @media (max-width: 560px) { .readout { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .metric { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .metric .val { font-size: 1.35rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .metric.big .val { font-size: 1.5rem; }
+
+  .meter { height: 8px; background: #eceef1; border-radius: 6px; overflow: hidden; margin-top: 6px; }
+  .meter > div { height: 100%; width: 0%; background: #22c55e; transition: width .08s linear; border-radius: 6px; }
+
+  .status { margin-top: 12px; padding: 10px 12px; border-radius: 10px; font-size: .92rem; border: 1px solid var(--line); background: #fafafa; }
+  .status.good { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+  .status.warn { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+  .status.bad  { border-color: #fecaca; background: #fef2f2; color: #991b1b; }
+
+  .howto { font-size: .88rem; color: var(--muted); }
+  .howto code { background: #eef1f5; padding: 1px 5px; border-radius: 5px; font-size: .82rem; }
+  .err { color: var(--bad); font-size: .9rem; margin-top: 8px; display: none; }
+  #camVideo { position: fixed; left: -10000px; top: 0; width: 320px; height: 240px;
+    opacity: 0; pointer-events: none; }
+  #jawBar { background: #0f766e; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vowel Formant Tracker</h1>
+  <p class="sub">Practice English vowels: see your tongue position live against native-speaker targets (Hillenbrand et al., 1995).</p>
+
+  <div class="card">
+    <div class="controls">
+      <button id="btnStart" class="primary">▶ Start microphone</button>
+      <button id="btnCam" title="Front camera: drives the jaw in the diagram">◉ Camera</button>
+      <button id="btnPlay" disabled title="Replay the last 3 seconds of your voice">▶ Play back (3 s)</button>
+      <div class="seg" role="group" aria-label="Reference speaker gender">
+        <button id="btnMale" class="active">Men</button>
+        <button id="btnFemale">Women</button>
+      </div>
+      <div class="seg" role="group" aria-label="Chart scale">
+        <button id="btnTongue" class="active" title="Tongue-position view: F1 (height) vs F2−F1 (backness)">Tongue</button>
+        <button id="btnBark" title="Classic F1 × F2 on a Bark scale">F1×F2 Bark</button>
+        <button id="btnLinear" title="Raw F1 × F2 in Hz">F1×F2 Hz</button>
+      </div>
+      <button id="btnClear">Clear trail</button>
+      <span class="label" style="margin-left:6px">Dot every</span>
+      <input type="range" id="interval" min="500" max="3000" step="100" value="1500" style="width:120px" />
+      <span id="intervalVal" class="hint">1.5 s</span>
+    </div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="card">
+    <canvas id="chart" width="720" height="560"></canvas>
+    <video id="camVideo" playsinline muted></video>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--ref-m)"></span>Native speakers (reference)</span>
+      <span><span class="dot" style="background:var(--user)"></span>Your tongue / production</span>
+      <span class="hint" id="scaleHint">Tongue position: F1 = height (close ↑ / open ↓) · F2−F1 (Bark) = backness (front ← / back →)</span>
+      <span class="hint" id="camHint">Camera off — the jaw follows the camera when enabled.</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="readout">
+      <div class="metric big"><div>F1</div><div class="val" id="f1">—</div><div>Hz</div></div>
+      <div class="metric big"><div>F2</div><div class="val" id="f2">—</div><div>Hz</div></div>
+      <div class="metric"><div>F0 (pitch)</div><div class="val" id="f0">—</div><div id="voiceState">silent</div></div>
+      <div class="metric"><div>Jaw</div><div class="val" id="jawVal">—</div>
+        <div class="meter"><div id="jawBar"></div></div>
+        <div id="jawState">camera off</div>
+      </div>
+      <div class="metric"><div>Nearest reference</div><div class="val" id="nearest">—</div><div id="nearestWord">&nbsp;</div></div>
+      <div class="metric"><div>Distance</div><div class="val" id="dist">—</div><div>Hz (approx.)</div></div>
+      <div class="metric"><div>Input level</div><div class="val" id="levelPct">0%</div>
+        <div class="meter"><div id="meterBar"></div></div>
+      </div>
+    </div>
+    <div class="status" id="status">Press <b>Start microphone</b> and speak a sustained vowel (e.g. “ee”, “ah”, “oo”).</div>
+  </div>
+
+  <div class="card howto">
+    <b>How to use</b>
+    <ol style="margin:.4em 0 0; padding-left:1.2em">
+      <li>Allow microphone access, then pick <b>Men</b> or <b>Women</b> as your reference (default: Men).</li>
+      <li>Produce one vowel continuously and steadily (e.g. /i/ as in <i>heed</i>, /ɑ/ as in <i>hod</i>, /u/ as in <i>who'd</i>).</li>
+      <li>The <b>rose tongue</b> shows your live tongue position; aim at its blue target dot.</li>
+      <li>The faint trail shows your recent attempts (a dot every <span id="howtoInterval">1.5</span>&nbsp;s) — a tight cluster means you are consistent.</li>
+      <li>Hit <b>▶ Play back</b> to hear the last 3 seconds of your voice and compare it to the target sound.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =======================================================================
+ * Reference data — Hillenbrand, Getty, Clark & Wheeler (1995).
+ * "Acoustic characteristics of American English vowels", JASA 97:3099–3111.
+ * Mean F1/F2 (Hz) for men (45) and women (48), /hVd/ context.
+ * ===================================================================== */
+const VOWELS = [
+  { ipa: "i",  word: "heed",  m: { f1: 342, f2: 2322 }, w: { f1: 437, f2: 2761 } },
+  { ipa: "ɪ",  word: "hid",   m: { f1: 427, f2: 2034 }, w: { f1: 483, f2: 2365 } },
+  { ipa: "ɛ",  word: "head",  m: { f1: 580, f2: 1799 }, w: { f1: 731, f2: 2058 } },
+  { ipa: "æ",  word: "had",   m: { f1: 588, f2: 1952 }, w: { f1: 669, f2: 2349 } },
+  { ipa: "ɑ",  word: "hod",   m: { f1: 768, f2: 1333 }, w: { f1: 936, f2: 1551 } },
+  { ipa: "ɔ",  word: "hawed", m: { f1: 652, f2: 997  }, w: { f1: 781, f2: 1136 } },
+  { ipa: "ʊ",  word: "hood",  m: { f1: 469, f2: 1122 }, w: { f1: 519, f2: 1225 } },
+  { ipa: "u",  word: "who'd", m: { f1: 378, f2: 997  }, w: { f1: 459, f2: 1105 } },
+  { ipa: "ʌ",  word: "hud",   m: { f1: 623, f2: 1200 }, w: { f1: 753, f2: 1426 } },
+  { ipa: "ɝ",  word: "heard", m: { f1: 474, f2: 1379 }, w: { f1: 586, f2: 1718 } },
+];
+
+/* ======================= Tunable constants ======================= */
+const F1_MIN = 200, F1_MAX = 1000;
+const F2_MIN = 600, F2_MAX = 3000;
+const PREEMPH = 0.97;
+const ENERGY_THRESHOLD = 0.004;   // RMS silence gate (float32 scale)
+const VOICE_CONF_MIN = 0.50;      // YIN confidence (1 − aperiodicity)
+const ZCR_MAX = 0.32;             // reject noise-like frames (/s/, /t/ bursts)
+
+/* Tongue stabiliser: plausibility + spike rejection + median-of-3. */
+const TRACK_F1_MIN = 180, TRACK_F1_MAX = 1150;
+const TRACK_F2_MIN = 550, TRACK_F2_MAX = 3200;
+const TRACK_MIN_GAP = 150;        // F2 − F1 (Hz)
+const TRACK_JUMP_HZ = 450;        // max Euclidean F1/F2 jump per frame
+const TRACK_HOLD_MS = 300;        // clear history after a gap
+const TRACK_MAX_REJECTS = 4;      // re-acquire after this many rejects
+const NFFT = 4096;
+const BUFFER_SIZE = 2048;         // ScriptProcessor buffer (full rate)
+const REC_SECONDS = 10;           // ring-buffer capacity (seconds)
+const PLAY_SECONDS = 3;           // playback length (seconds)
+
+/* Bark (critical-band rate) transform — the auditory/perceptual scale used for
+   vowel charts (Zwicker). Applied to F1 for "height" and to the F2−F1 distance for
+   "backness" (Syrdal & Gopal 1986; Miller 1989; Ménard et al. 2002). */
+function toBark(hz) {
+  return 13 * Math.atan(0.76 * hz / 1000) + 3.5 * Math.atan(Math.pow(hz / 7500, 2));
+}
+const B1_MIN = toBark(F1_MIN), B1_MAX = toBark(F1_MAX);
+const B2_MIN = toBark(F2_MIN), B2_MAX = toBark(F2_MAX);
+const TONGUE_X_MIN = 0, TONGUE_X_MAX = 12;   // Bark(F2) − Bark(F1) range
+
+/* Midsagittal tongue-dorsum box (canvas pixels). Front/high vowels sit near
+   frontX/closeY; back/low vowels near backX/openY. Scaled to the vowel range. */
+const DORSUM = { frontX: 310, backX: 452, closeY: 348, openY: 466 };
+const F1_BARK_LO = 3.2, F1_BARK_HI = 7.0;    // vowel F1 range (Bark)
+const BDIFF_LO = 2.5, BDIFF_HI = 10.7;        // vowel F2−F1 range (Bark)
+
+/* ======================= DOM refs ======================= */
+const canvas = document.getElementById("chart");
+const ctx = canvas.getContext("2d");
+const $ = (id) => document.getElementById(id);
+const btnStart = $("btnStart"), btnClear = $("btnClear"), btnCam = $("btnCam");
+const btnMale = $("btnMale"), btnFemale = $("btnFemale");
+const btnPlay = $("btnPlay"), btnTongue = $("btnTongue"), btnBark = $("btnBark"), btnLinear = $("btnLinear");
+const intervalInput = $("interval"), intervalVal = $("intervalVal");
+const errEl = $("err");
+
+/* ======================= State ======================= */
+let gender = "m";                 // 'm' | 'w'
+let scaleMode = "tongue";         // 'tongue' | 'bark' | 'linear'
+let audioCtx = null, sourceNode = null, scriptNode = null, muteNode = null;
+let stream = null;
+let running = false;
+let fs2 = 16000;                  // decimated sample rate (set on start)
+let decimator = null, decOut = null;
+let dotIntervalMs = 1500;
+let dotTimer = null;
+
+let recBuf = null, recPos = 0, recFilled = false;   // recording ring buffer
+let isPlayingBack = false;
+
+let userDots = [];                // {f1, f2}
+let recentPoints = [];            // {f1, f2} since last dot
+let latest = null;                // {f1, f2} of most recent stable voiced frame
+let lastReadoutUpdate = 0;
+let lastVoicedAt = 0;             // timestamp of last voiced frame (for tongue fade)
+
+/* Rejects impossible formants and one-frame spikes, then displays the median
+   of the last three accepted frames. A real transition moves all three
+   values, so it still follows (with ~1 frame of lag). */
+const tongueTracker = {
+  raw: [], lastRaw: null, lastRawAt: 0, rejectRun: 0,
+  reset() {
+    this.raw = []; this.lastRaw = null; this.lastRawAt = 0; this.rejectRun = 0;
+  },
+  reject() {
+    this.rejectRun++;
+    if (this.rejectRun > TRACK_MAX_REJECTS) this.reset();  // allow re-acquire
+    return null;
+  },
+  push(f1, f2, now) {
+    const plausible = f1 >= TRACK_F1_MIN && f1 <= TRACK_F1_MAX &&
+                      f2 >= TRACK_F2_MIN && f2 <= TRACK_F2_MAX &&
+                      f2 >= f1 + TRACK_MIN_GAP;
+    if (!plausible) return this.reject();
+
+    // A gap means a new vowel: don't mix the old history.
+    if (!this.lastRaw || now - this.lastRawAt > TRACK_HOLD_MS) this.raw = [];
+
+    if (this.lastRaw && now - this.lastRawAt <= TRACK_HOLD_MS) {
+      const jump = Math.hypot(f1 - this.lastRaw.f1, f2 - this.lastRaw.f2);
+      if (jump > TRACK_JUMP_HZ) return this.reject();
+    }
+
+    this.raw.push({ f1, f2 });
+    if (this.raw.length > 3) this.raw.shift();
+    this.lastRaw = { f1, f2 };
+    this.lastRawAt = now;
+    this.rejectRun = 0;
+
+    return {
+      f1: median(this.raw.map(p => p.f1)),
+      f2: median(this.raw.map(p => p.f2))
+    };
+  }
+};
+
+/* Optional front camera (MediaPipe Face Landmarker) — drives the jaw. */
+const CAM_VERSION = "0.10.14";
+const CAM_WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${CAM_VERSION}/wasm`;
+const CAM_MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const CAM_PANEL = { x: 502, y: 16, w: 200, h: 150 };
+const camVideoEl = $("camVideo");
+let camStream = null, camModel = null, camOn = false, camBusy = false;
+let camLandmarks = null, camJawRaw = 0, camJaw = 0, jawForced = null;
+let camLastUi = 0, jawDropPx = 0;
+
+/* Vocal-fold animation state (display rate, not the real 100–300 Hz). */
+let vibPhase = 0, vibAmp = 0;
+
+/* Reusable DSP buffers (allocated in configure()) */
+let p = 18, maxLag = 228;
+let lpcA, r, wbuf, poly, rootsRe, rootsIm;
+let yinD, yinDP;                  // YIN difference / cumulative-mean-normalized
+let voiceDbg = {};                // last-frame voicing diagnostics
+
+/* ======================= Chart geometry ======================= */
+const MARGIN = { left: 58, right: 22, top: 22, bottom: 44 };
+function layout() {
+  const w = canvas.width, h = canvas.height;
+  return {
+    w, h,
+    plotL: MARGIN.left,
+    plotR: w - MARGIN.right,
+    plotT: MARGIN.top,
+    plotB: h - MARGIN.bottom,
+  };
+}
+/* Axis mapping.
+   - Vertical  (height/openness): F1, in Bark (or Hz in "linear" mode).
+   - Horizontal (backness):        F2 − F1 in Bark (or raw F2 in Bark/Hz modes).
+   "tongue" mode plots Bark(F2) − Bark(F1) on x, which is the perceptual correlate
+   of front/back articulation (front vowels have a large F2−F1 gap). */
+function yValue(f1) {
+  return scaleMode === "linear" ? f1 : toBark(f1);
+}
+function xValue(f1, f2) {
+  if (scaleMode === "tongue") return toBark(f2) - toBark(f1);
+  if (scaleMode === "bark") return toBark(f2);
+  return f2;
+}
+function yRange() {
+  return scaleMode === "linear" ? [F1_MIN, F1_MAX] : [B1_MIN, B1_MAX];
+}
+function xRange() {
+  if (scaleMode === "tongue") return [TONGUE_X_MIN, TONGUE_X_MAX];
+  if (scaleMode === "bark") return [B2_MIN, B2_MAX];
+  return [F2_MIN, F2_MAX];
+}
+function toXY(f1, f2) {
+  if (scaleMode === "tongue") return tongueDorsumXY(f1, f2);
+  const L = layout();
+  const [xlo, xhi] = xRange(), [ylo, yhi] = yRange();
+  const x = L.plotL + (xhi - xValue(f1, f2)) / (xhi - xlo) * (L.plotR - L.plotL);
+  const y = L.plotT + (yValue(f1) - ylo) / (yhi - ylo) * (L.plotB - L.plotT);
+  return [x, y];
+}
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+/* Map a vowel (f1, f2) to the tongue-dorsum position in the midsagittal mouth.
+   x = front/back (F2−F1 in Bark), y = close/open (F1 in Bark). */
+function tongueDorsumXY(f1, f2) {
+  const open = clamp((toBark(f1) - F1_BARK_LO) / (F1_BARK_HI - F1_BARK_LO), 0, 1);
+  const back = clamp((BDIFF_HI - (toBark(f2) - toBark(f1))) / (BDIFF_HI - BDIFF_LO), 0, 1);
+  const x = DORSUM.frontX + back * (DORSUM.backX - DORSUM.frontX);
+  const y = DORSUM.closeY + open * (DORSUM.openY - DORSUM.closeY);
+  return [x, y];
+}
+
+/* ======================= DSP: FFT ======================= */
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+      t = im[i]; im[i] = im[j]; im[j] = t;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wRe = Math.cos(ang), wIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cRe = 1, cIm = 0;
+      const half = len >> 1;
+      for (let k = 0; k < half; k++) {
+        const uRe = re[i + k], uIm = im[i + k];
+        const vRe = re[i + k + half] * cRe - im[i + k + half] * cIm;
+        const vIm = re[i + k + half] * cIm + im[i + k + half] * cRe;
+        re[i + k] = uRe + vRe; im[i + k] = uIm + vIm;
+        re[i + k + half] = uRe - vRe; im[i + k + half] = uIm - vIm;
+        const nRe = cRe * wRe - cIm * wIm;
+        cIm = cRe * wIm + cIm * wRe;
+        cRe = nRe;
+      }
+    }
+  }
+}
+
+/* ======================= DSP: Levinson-Durbin ======================= */
+/* Solves the autocorrelation (Yule-Walker) equations; fills a[1..p]. */
+function levinson(rr, pp, a) {
+  a[0] = 1;
+  let E = rr[0];
+  for (let i = 1; i <= pp; i++) {
+    let acc = rr[i];
+    for (let j = 1; j < i; j++) acc -= a[j] * rr[i - j];
+    const lambda = acc / E;
+    const prev = a.slice(0, i);            // old coefficients
+    a[i] = lambda;
+    for (let j = 1; j < i; j++) a[j] = prev[j] - lambda * prev[i - j];
+    E = E * (1 - lambda * lambda);
+    if (!isFinite(E) || E <= 1e-30) break;
+  }
+}
+
+/* ======================= DSP: streaming decimator ======================= */
+class Decimator {
+  constructor(factor, numTaps = 33) {
+    this.factor = factor;
+    const cutoff = 0.5 / factor;           // relative to full-rate Nyquist
+    const taps = Math.max(7, numTaps);
+    const center = (taps - 1) / 2;
+    this.coeffs = new Float32Array(taps);
+    let sum = 0;
+    for (let i = 0; i < taps; i++) {
+      const x = i - center;
+      let c = (x === 0) ? 2 * cutoff : Math.sin(2 * Math.PI * cutoff * x) / (Math.PI * x);
+      c *= 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (taps - 1)); // Hamming
+      this.coeffs[i] = c;
+      sum += c;
+    }
+    for (let i = 0; i < taps; i++) this.coeffs[i] /= sum;
+    this.buf = new Float32Array(taps);
+    this.counter = 0;
+  }
+  process(input, out) {
+    const factor = this.factor;
+    let oi = 0;
+    for (let i = 0; i < input.length; i++) {
+      this.buf.copyWithin(0, 1);
+      this.buf[this.buf.length - 1] = input[i];
+      if (this.counter % factor === 0) {
+        let acc = 0;
+        const c = this.coeffs, b = this.buf;
+        for (let j = 0; j < c.length; j++) acc += c[j] * b[j];
+        out[oi++] = acc;
+      }
+      this.counter++;
+    }
+    return oi;
+  }
+}
+
+/* ======================= DSP: pole-based formant extraction ======================= */
+/* Roots of the LPC prediction polynomial are found with the Durand–Kerner method,
+   and F1/F2 are read directly from the pole frequencies and bandwidths. This is far
+   more robust than spectral peak-picking for back vowels (/u o ʊ ɔ/), whose F2 is
+   weak and close to F1 (peak-picking tends to grab F3 instead). */
+function lpcRoots(n) {
+  // poly[0..n] holds ascending coefficients; poly[n] is the leading coefficient.
+  const lead = poly[n];
+  if (lead !== 1) for (let i = 0; i <= n; i++) poly[i] /= lead;
+
+  // initial guesses: z_k = (0.4 + 0.9i)^k
+  let re = 1, im = 0;
+  for (let k = 0; k < n; k++) {
+    rootsRe[k] = re; rootsIm[k] = im;
+    const nr = re * 0.4 - im * 0.9, ni = re * 0.9 + im * 0.4;
+    re = nr; im = ni;
+  }
+
+  for (let it = 0; it < 400; it++) {
+    let maxd = 0;
+    for (let i = 0; i < n; i++) {
+      // Horner: evaluate P(z_i)
+      let pr = poly[n], pi = 0;
+      for (let k = n - 1; k >= 0; k--) {
+        const nr = pr * rootsRe[i] - pi * rootsIm[i] + poly[k];
+        const ni = pr * rootsIm[i] + pi * rootsRe[i];
+        pr = nr; pi = ni;
+      }
+      // product Π_{j≠i}(z_i − z_j)
+      let qr = 1, qi = 0;
+      for (let j = 0; j < n; j++) {
+        if (j === i) continue;
+        const dr = rootsRe[i] - rootsRe[j], di = rootsIm[i] - rootsIm[j];
+        const nr = qr * dr - qi * di, ni = qr * di + qi * dr;
+        qr = nr; qi = ni;
+      }
+      const den = qr * qr + qi * qi;
+      if (den < 1e-30) continue;
+      const dr = (pr * qr + pi * qi) / den;
+      const di = (pi * qr - pr * qi) / den;
+      rootsRe[i] -= dr; rootsIm[i] -= di;
+      const d = dr * dr + di * di;
+      if (d > maxd) maxd = d;
+    }
+    if (maxd < 1e-22) break;
+  }
+}
+
+function formantsFromRoots(n, fs) {
+  const fm = [];
+  for (let i = 0; i < n; i++) {
+    if (rootsIm[i] <= 0) continue;                 // upper half-plane only
+    const radius = Math.hypot(rootsRe[i], rootsIm[i]);
+    const freq = Math.atan2(rootsIm[i], rootsRe[i]) / (2 * Math.PI) * fs;
+    const bw = -Math.log(radius) / Math.PI * fs;
+    if (freq < 60 || freq > 4200) continue;
+    if (radius < 0.6 || bw > 500) continue;        // too broad → spurious pole
+    fm.push({ freq, bw });
+  }
+  fm.sort((a, b) => a.freq - b.freq);
+  let f1 = null, f2 = null;
+  for (const f of fm) {
+    if (f1 === null) f1 = f.freq;
+    else if (f.freq >= f1 + 100) { f2 = f.freq; break; }
+  }
+  if (f1 === null) return null;
+  return { f1, f2 };
+}
+
+/* Analyze one decimated frame; returns {f1, f2} or null if not a
+   voiced, vowel-like frame. */
+function analyzeFrame(x, n, fs) {
+  // 1) energy (silence) gate on the raw frame
+  let e = 0;
+  for (let i = 0; i < n; i++) e += x[i] * x[i];
+  const rms = Math.sqrt(e / n);
+  voiceDbg = { rms };
+  if (rms < ENERGY_THRESHOLD) return null;
+
+  let zc = 0;
+  for (let i = 1; i < n; i++) {
+    if ((x[i - 1] >= 0) !== (x[i] >= 0)) zc++;
+  }
+  const zcr = zc / Math.max(1, n - 1);
+  voiceDbg.zcr = zcr;
+  if (zcr > ZCR_MAX) return null;   // sibilant / burst: not voiced
+
+  // 2) pre-emphasis + Hamming window
+  for (let i = 0; i < n; i++) {
+    const prev = i > 0 ? x[i - 1] : 0;
+    const y = x[i] - PREEMPH * prev;
+    const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (n - 1));
+    wbuf[i] = y * w;
+  }
+
+  // 3) autocorrelation (0..maxLag)
+  for (let k = 0; k <= maxLag; k++) {
+    let s = 0;
+    const nn = n - k;
+    for (let i = 0; i < nn; i++) s += wbuf[i] * wbuf[i + k];
+    r[k] = s;
+  }
+  r[0] *= 1.0001;   // tiny floor for LPC stability
+
+  // 4) voicing: periodicity, not loudness.
+  //    (a) zero-crossing rate rejects sibilants / plosive bursts, which are
+  //        noise-like even when loud. (b) YIN's cumulative-mean-normalized
+  //        difference gives a robust pitch + aperiodicity measure.
+  const minLag = Math.floor(fs / 400);
+  const maxL = maxLag;
+  const W = n - maxL;
+  if (W < 64) return null;
+
+  for (let tau = 1; tau <= maxL; tau++) {
+    let s = 0;
+    for (let j = 0; j < W; j++) {
+      const d = wbuf[j] - wbuf[j + tau];
+      s += d * d;
+    }
+    yinD[tau] = s;
+  }
+  let running = 0;
+  yinDP[0] = 1;
+  for (let tau = 1; tau <= maxL; tau++) {
+    running += yinD[tau];
+    yinDP[tau] = running > 1e-12 ? yinD[tau] * tau / running : 1;
+  }
+
+  let tauEst = -1;
+  for (let tau = minLag; tau <= maxL; tau++) {
+    if (yinDP[tau] < 0.20) {
+      let t = tau;
+      while (t + 1 <= maxL && yinDP[t + 1] < yinDP[t]) t++;
+      tauEst = t;
+      break;
+    }
+  }
+  if (tauEst < 0) {
+    let bestD = Infinity;
+    for (let tau = minLag; tau <= maxL; tau++) {
+      if (yinDP[tau] < bestD) { bestD = yinDP[tau]; tauEst = tau; }
+    }
+    // No dip below 0.20: take the global minimum and let the confidence gate
+    // below decide. (A hard aperiodicity cutoff here rejected noisy-but-voiced
+    // vowels at ~10 dB SNR.)
+  }
+  const aper = yinDP[tauEst];
+  const conf = clamp(1 - aper, 0, 1);
+  voiceDbg.aper = aper; voiceDbg.conf = conf;
+  if (conf < VOICE_CONF_MIN) return null;
+
+  let shift = 0;
+  if (tauEst > minLag && tauEst < maxL) {
+    const y0 = yinDP[tauEst - 1], y1 = yinDP[tauEst], y2 = yinDP[tauEst + 1];
+    const den = y0 - 2 * y1 + y2;
+    if (Math.abs(den) > 1e-12) shift = 0.5 * (y0 - y2) / den;
+  }
+  const f0 = fs / (tauEst + shift);
+
+  // 5) LPC coefficients
+  lpcA.fill(0);
+  levinson(r, p, lpcA);
+
+  // 6) formants from LPC poles (Durand–Kerner roots)
+  poly[p] = 1;
+  for (let i = 1; i <= p; i++) poly[p - i] = -lpcA[i];
+  lpcRoots(p);
+  const res = formantsFromRoots(p, fs);
+  voiceDbg.formants = res ? [res.f1, res.f2] : null;
+  if (!res || res.f2 == null) return null;      // need both F1 and F2
+  return { f1: res.f1, f2: res.f2, f0, pitch: conf, rms, zcr };
+}
+
+/* ======================= Nearest reference vowel ======================= */
+function nearestVowel(f1, f2) {
+  let best = null, bestD = Infinity;
+  for (const v of VOWELS) {
+    const ref = gender === "m" ? v.m : v.w;
+    const d = Math.hypot(f1 - ref.f1, f2 - ref.f2);
+    if (d < bestD) { bestD = d; best = v; }
+  }
+  return { vowel: best, dist: bestD };
+}
+function median(arr) {
+  if (!arr.length) return null;
+  const a = arr.slice().sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+/* ======================= Chart drawing ======================= */
+function drawChart() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (scaleMode === "tongue") drawTongueChart();
+  else drawCartesianChart();
+}
+
+function drawCartesianChart() {
+  const L = layout();
+  const px = L.plotL, py = L.plotT, pw = L.plotR - L.plotL, ph = L.plotB - L.plotT;
+
+  // grid + ticks
+  ctx.font = "11px -apple-system, system-ui, sans-serif";
+  ctx.fillStyle = "#9ca3af";
+  ctx.strokeStyle = "#eceef1";
+  ctx.lineWidth = 1;
+  const [xlo, xhi] = xRange(), [ylo, yhi] = yRange();
+  for (let f1 = F1_MIN; f1 <= F1_MAX; f1 += 100) {
+    const y = py + (yValue(f1) - ylo) / (yhi - ylo) * ph;
+    ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px + pw, y); ctx.stroke();
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillText(String(f1), px - 8, y);
+  }
+  const f2Ticks = scaleMode === "bark"
+    ? [600, 800, 1000, 1300, 1700, 2200, 2800]
+    : Array.from({ length: 13 }, (_, i) => F2_MIN + i * 200);
+  for (const f2 of f2Ticks) {
+    const v = scaleMode === "bark" ? toBark(f2) : f2;
+    const x = px + (xhi - v) / (xhi - xlo) * pw;
+    ctx.beginPath(); ctx.moveTo(x, py); ctx.lineTo(x, py + ph); ctx.stroke();
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText(String(f2), x, py + ph + 6);
+  }
+
+  // axis labels
+  ctx.fillStyle = "#6b7280";
+  ctx.save();
+  ctx.translate(14, py + ph / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText("F1 (Hz)", 0, 0);
+  ctx.restore();
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.fillText("F2 (Hz) — front ← / back →", px + pw / 2, L.h - 18);
+
+  // reference vowels
+  const refColor = gender === "m" ? "#2563eb" : "#7c3aed";
+  ctx.font = "600 15px -apple-system, system-ui, sans-serif";
+  for (const v of VOWELS) {
+    const ref = gender === "m" ? v.m : v.w;
+    const [x, y] = toXY(ref.f1, ref.f2);
+    ctx.beginPath();
+    ctx.fillStyle = refColor;
+    ctx.globalAlpha = 0.18;
+    ctx.arc(x, y, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = refColor;
+    ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+    ctx.fillText(v.ipa, x + 8, y - 4);
+  }
+
+  // user dots
+  ctx.fillStyle = "#f43f5e";
+  for (let i = 0; i < userDots.length; i++) {
+    const d = userDots[i];
+    const [x, y] = toXY(d.f1, d.f2);
+    ctx.globalAlpha = i === userDots.length - 1 ? 1 : 0.55;
+    ctx.beginPath();
+    ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (userDots.length) {
+    const d = userDots[userDots.length - 1];
+    const [x, y] = toXY(d.f1, d.f2);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#f43f5e";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // live position (same feedback as the live tongue in the anatomy view)
+  if (latest) {
+    const [x, y] = toXY(latest.f1, latest.f2);
+    const silent = performance.now() - lastVoicedAt > 1200;
+    ctx.globalAlpha = silent ? 0.35 : 1;
+    ctx.fillStyle = "#f43f5e";
+    ctx.beginPath();
+    ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- Tongue figure (default, for ESL practice) ---------- */
+/* Flat, high-contrast sagittal head in the style of a phonetics textbook:
+   a solid gray profile, white cavities, black ink lines and call-out labels.
+   Everything is vector-drawn, so it stays crisp at any canvas size. */
+
+const ANAT = {
+  ink: "#5d4032",
+  fill: "#f7d8c4",
+  fillSoft: "#f0c3ae",
+  bone: "#fffdf6",
+  label: "#2b1d16",
+  mucosa: "#f3c7b6",
+  mucosaLine: "#b57a63",
+  oral: "#fff4e8",
+  tongueHi: "#f6b3aa",
+  tongueLo: "#e07b73",
+  tongueLine: "#a8463e",
+};
+
+/* Static anatomy paths, built once and cached. */
+let ANAT_PATHS = null;
+function anatPaths() {
+  if (ANAT_PATHS) return ANAT_PATHS;
+
+  const head = new Path2D();
+  head.moveTo(330, 28);
+  head.bezierCurveTo(438, 12, 534, 56, 586, 132);
+  head.bezierCurveTo(620, 180, 630, 242, 622, 302);
+  head.bezierCurveTo(614, 372, 592, 432, 562, 472);
+  head.bezierCurveTo(548, 492, 544, 544, 544, 640);
+  head.lineTo(368, 640);
+  head.bezierCurveTo(366, 600, 364, 580, 356, 556);
+  head.bezierCurveTo(350, 530, 332, 510, 306, 500);
+  head.bezierCurveTo(280, 490, 254, 484, 232, 478);
+  head.bezierCurveTo(214, 472, 196, 464, 178, 454);
+  head.bezierCurveTo(175, 444, 176, 430, 178, 420);
+  head.bezierCurveTo(181, 410, 184, 400, 184, 397);
+  head.bezierCurveTo(172, 394, 161, 393, 158, 391);
+  head.bezierCurveTo(152, 388, 151, 380, 157, 374);
+  head.bezierCurveTo(166, 371, 181, 369, 194, 366);
+  head.bezierCurveTo(194, 364, 194, 362, 193, 360);
+  head.bezierCurveTo(180, 358, 167, 357, 160, 355);
+  head.bezierCurveTo(154, 352, 156, 338, 164, 334);
+  head.bezierCurveTo(176, 331, 190, 329, 199, 327);
+  head.bezierCurveTo(203, 325, 203, 320, 202, 316);
+  head.bezierCurveTo(199, 312, 192, 310, 185, 309);
+  head.bezierCurveTo(168, 308, 142, 302, 126, 296);
+  head.bezierCurveTo(116, 292, 114, 282, 122, 274);
+  head.bezierCurveTo(136, 264, 162, 252, 180, 244);
+  head.bezierCurveTo(188, 238, 194, 232, 198, 226);
+  head.bezierCurveTo(202, 218, 204, 212, 204, 206);
+  head.bezierCurveTo(206, 198, 210, 188, 214, 174);
+  head.bezierCurveTo(220, 138, 240, 88, 285, 56);
+  head.bezierCurveTo(300, 44, 315, 34, 330, 28);
+  head.closePath();
+
+  // Nasal cavity + nasopharynx. The cavity is open at the choanae and continues
+  // behind the velum down to the oropharynx: the velopharyngeal port.
+  const nasal = new Path2D();
+  nasal.moveTo(200, 316);
+  nasal.bezierCurveTo(200, 300, 210, 288, 228, 280);
+  nasal.bezierCurveTo(270, 264, 330, 258, 380, 266);
+  nasal.bezierCurveTo(420, 272, 446, 286, 458, 306);
+  nasal.bezierCurveTo(472, 312, 486, 318, 496, 330);
+  nasal.bezierCurveTo(500, 348, 501, 370, 499, 392);
+  nasal.bezierCurveTo(498, 410, 496, 424, 493, 436);
+  nasal.lineTo(472, 436);
+  nasal.bezierCurveTo(476, 414, 474, 392, 468, 374);
+  nasal.bezierCurveTo(462, 360, 456, 348, 452, 340);
+  nasal.bezierCurveTo(440, 328, 414, 320, 386, 316);
+  nasal.bezierCurveTo(338, 310, 286, 311, 246, 318);
+  nasal.bezierCurveTo(224, 322, 208, 322, 200, 316);
+  nasal.closePath();
+
+  // Oral cavity: lips → palate → velum → pharynx → mouth floor.
+  const oral = new Path2D();
+  oral.moveTo(205, 350);
+  oral.bezierCurveTo(230, 346, 248, 342, 256, 338);
+  oral.bezierCurveTo(300, 336, 360, 336, 408, 340);
+  oral.bezierCurveTo(436, 343, 454, 350, 468, 362);
+  oral.bezierCurveTo(486, 382, 496, 408, 498, 438);
+  oral.bezierCurveTo(500, 488, 496, 506, 490, 522);
+  oral.lineTo(468, 528);
+  oral.bezierCurveTo(474, 508, 474, 492, 468, 480);
+  oral.bezierCurveTo(456, 488, 424, 496, 384, 500);
+  oral.bezierCurveTo(334, 504, 284, 498, 256, 484);
+  oral.bezierCurveTo(238, 474, 224, 458, 216, 442);
+  oral.bezierCurveTo(209, 430, 205, 412, 204, 396);
+  oral.bezierCurveTo(203, 384, 204, 368, 205, 352);
+  oral.closePath();
+
+  // Soft palate (velum) with the uvula at its tip. It hangs free of the
+  // posterior pharyngeal wall; the gap is the velopharyngeal port.
+  const velum = new Path2D();
+  velum.moveTo(452, 338);
+  velum.bezierCurveTo(462, 346, 470, 360, 474, 378);
+  velum.bezierCurveTo(477, 386, 477, 396, 473, 402);
+  velum.bezierCurveTo(468, 402, 465, 394, 463, 386);
+  velum.bezierCurveTo(459, 368, 454, 354, 448, 346);
+  velum.closePath();
+
+  const upperTeeth = new Path2D();
+  upperTeeth.moveTo(209, 336);
+  upperTeeth.lineTo(231, 336);
+  upperTeeth.bezierCurveTo(231, 356, 228, 376, 224, 388);
+  upperTeeth.bezierCurveTo(220, 390, 216, 380, 214, 366);
+  upperTeeth.bezierCurveTo(212, 354, 210, 344, 209, 336);
+  upperTeeth.closePath();
+  upperTeeth.moveTo(233, 338);
+  upperTeeth.lineTo(247, 340);
+  upperTeeth.bezierCurveTo(246, 356, 243, 372, 240, 382);
+  upperTeeth.bezierCurveTo(236, 384, 234, 370, 233, 356);
+  upperTeeth.closePath();
+
+  const lowerTeeth = new Path2D();
+  lowerTeeth.moveTo(208, 442);
+  lowerTeeth.lineTo(230, 443);
+  lowerTeeth.bezierCurveTo(230, 426, 227, 412, 223, 404);
+  lowerTeeth.bezierCurveTo(218, 412, 213, 430, 210, 438);
+  lowerTeeth.bezierCurveTo(209, 440, 208, 442, 208, 442);
+  lowerTeeth.closePath();
+  lowerTeeth.moveTo(232, 443);
+  lowerTeeth.lineTo(246, 444);
+  lowerTeeth.bezierCurveTo(245, 430, 242, 416, 238, 410);
+  lowerTeeth.bezierCurveTo(235, 418, 233, 432, 232, 440);
+  lowerTeeth.closePath();
+
+  // Larynx: thyroid cartilage around the airway.
+  const larynx = new Path2D();
+  larynx.moveTo(464, 500);
+  larynx.bezierCurveTo(454, 516, 452, 542, 460, 560);
+  larynx.bezierCurveTo(466, 568, 480, 570, 492, 566);
+  larynx.bezierCurveTo(502, 546, 502, 520, 495, 502);
+  larynx.closePath();
+
+  const airway = new Path2D();
+  airway.moveTo(472, 506);
+  airway.bezierCurveTo(467, 526, 468, 548, 474, 562);
+  airway.lineTo(490, 562);
+  airway.bezierCurveTo(496, 540, 495, 520, 490, 506);
+  airway.closePath();
+
+  // Epiglottis: leaf-shaped flap behind the tongue root.
+  const epiglottis = new Path2D();
+  epiglottis.moveTo(476, 510);
+  epiglottis.bezierCurveTo(471, 492, 479, 470, 494, 454);
+  epiglottis.bezierCurveTo(501, 446, 507, 449, 505, 460);
+  epiglottis.bezierCurveTo(502, 480, 494, 498, 486, 510);
+  epiglottis.bezierCurveTo(481, 516, 477, 515, 476, 510);
+  epiglottis.closePath();
+
+  ANAT_PATHS = { head, nasal, oral, velum, upperTeeth, lowerTeeth, larynx, airway, epiglottis };
+  return ANAT_PATHS;
+}
+
+/* Oral-cavity path with the floor lowered by `drop` px (jaw opening).
+   The palate, back wall and lips stay fixed; the floor and the front of the
+   cavity sag, so the cavity grows downward as the jaw opens. */
+function buildOralPath(drop) {
+  if (drop < 0.25) return anatPaths().oral;
+  const p = new Path2D();
+  p.moveTo(205, 350);
+  p.bezierCurveTo(230, 346, 248, 342, 256, 338);
+  p.bezierCurveTo(300, 336, 360, 336, 408, 340);
+  p.bezierCurveTo(436, 343, 454, 350, 468, 362);
+  p.bezierCurveTo(486, 382, 496, 408, 498, 438);
+  p.bezierCurveTo(500, 488, 496, 506, 490, 522 + drop * 0.30);
+  p.lineTo(468, 528 + drop * 0.45);
+  p.bezierCurveTo(474, 508 + drop * 0.55, 474, 492 + drop * 0.60, 468, 480 + drop * 0.60);
+  p.bezierCurveTo(456, 488 + drop * 0.80, 424, 496 + drop * 0.95, 384, 500 + drop);
+  p.bezierCurveTo(334, 504 + drop, 284, 498 + drop * 0.90, 256, 484 + drop * 0.70);
+  p.bezierCurveTo(238, 474 + drop * 0.55, 224, 458 + drop * 0.40, 216, 442 + drop * 0.25);
+  p.bezierCurveTo(209, 430, 205, 412, 204, 396);
+  p.bezierCurveTo(203, 384, 204, 368, 205, 352);
+  p.closePath();
+  return p;
+}
+
+function paintPath(path, fill, stroke, lw) {
+  if (fill) { ctx.fillStyle = fill; ctx.fill(path); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(path); }
+}
+
+function drawLeader(sx, sy, px, py) {
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(px, py);
+  ctx.stroke();
+  const a = Math.atan2(py - sy, px - sx);
+  const l = 5.5;
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(px - l * Math.cos(a - 0.42), py - l * Math.sin(a - 0.42));
+  ctx.moveTo(px, py);
+  ctx.lineTo(px - l * Math.cos(a + 0.42), py - l * Math.sin(a + 0.42));
+  ctx.stroke();
+}
+
+/* Label anchor: text at (x, y), leader starts at (sx, sy) and points at (px, py). */
+const ANAT_LABELS = [
+  { t: "Alveolar Ridge", x: 14, y: 202, sx: 122, sy: 205, px: 252, py: 338 },
+  { t: "Nostril", x: 14, y: 322, sx: 68, sy: 324, px: 148, py: 318 },
+  { t: "Lips", x: 14, y: 394, sx: 52, sy: 396, px: 166, py: 374 },
+  { t: "Teeth", x: 150, y: 500, sx: 198, sy: 498, px: 232, py: 424 },
+  { t: "Vocal Folds", x: 84, y: 544, sx: 176, sy: 540, px: 476, py: 534 },
+  { t: "Hard Palate", x: 392, y: 252, align: "center", sx: 400, sy: 262, px: 400, py: 332 },
+  { t: "Nasal Cavity", x: 252, y: 292, leader: false },
+  { t: "Tongue", x: 346, y: 538, align: "center", sx: 346, sy: 526, px: 340, py: 486 },
+  { t: "Velum (Soft Palate)", x: 486, y: 300, sx: 484, sy: 304, px: 466, py: 358 },
+  { t: "Velopharyngeal", x: 510, y: 340, size: 12, sx: 508, sy: 344, px: 486, py: 379 },
+  { t: "port", x: 510, y: 355, size: 12, leader: false },
+  { t: "Uvula", x: 516, y: 386, sx: 514, sy: 390, px: 472, py: 400 },
+  { t: "Pharynx", x: 516, y: 426, sx: 514, sy: 430, px: 492, py: 440 },
+  { t: "Epiglottis", x: 560, y: 488, sx: 557, sy: 490, px: 497, py: 476 },
+  { t: "Larynx", x: 556, y: 530, sx: 554, sy: 530, px: 496, py: 525 },
+];
+
+/* When the jaw opens, redraw the lower lip + chin + neck contour lower,
+   covering the old outline with a matching skin patch. The mouth cavity,
+   teeth and tongue are drawn afterwards and land on top. */
+function drawJawOverlay(skinGrad) {
+  const drop = jawDropPx;
+  if (drop < 0.4) return;
+  const l = drop * 0.9;
+
+  // skin patch: from the mouth line down over the lower face and neck
+  const p = new Path2D();
+  p.moveTo(156, 374);
+  p.bezierCurveTo(166, 371, 181, 369, 194, 366);
+  p.lineTo(200, 404);
+  p.lineTo(368, 404);
+  p.lineTo(368, 640);
+  p.lineTo(150, 640);
+  p.closePath();
+  ctx.fillStyle = skinGrad;
+  ctx.fill(p);
+
+  // dropped lower lip → chin → neck, redrawn in ink
+  ctx.beginPath();
+  ctx.moveTo(157, 374);
+  ctx.bezierCurveTo(151, 380 + l, 158, 391 + l, 161, 393 + l);
+  ctx.bezierCurveTo(172, 394 + l, 180, 396 + l, 184, 397 + l);
+  ctx.bezierCurveTo(178, 420 + l, 200, 450 + l, 232, 478 + l);
+  ctx.bezierCurveTo(262, 496 + l * 0.7, 300, 512 + l * 0.4, 330, 528 + l * 0.2);
+  ctx.bezierCurveTo(345, 538 + l * 0.1, 356, 546, 356, 556);
+  ctx.lineTo(368, 640);
+  ctx.strokeStyle = ANAT.ink;
+  ctx.lineWidth = 2.8;
+  ctx.stroke();
+
+  // dark gap between the upper lip and the dropped lower lip
+  const g = drop * 0.9;
+  ctx.beginPath();
+  ctx.moveTo(157, 374);
+  ctx.bezierCurveTo(166, 371, 181, 369, 194, 366);
+  ctx.lineTo(194, 366 + g);
+  ctx.bezierCurveTo(181, 369 + g, 166, 371 + g, 157, 374 + g);
+  ctx.closePath();
+  ctx.fillStyle = "#4a1f1b";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(93,64,50,.5)";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+}
+
+/* Vocal folds. When voiced they open/close at a visible rate derived from F0
+   (the real 100–300 Hz is far above 60 fps); when unvoiced they rest apart. */
+function drawVocalFolds() {
+  const voiced = vibAmp > 0.02;
+  const osc = voiced ? 0.5 + 0.5 * Math.sin(vibPhase) : 1;
+  const open = voiced ? 0.12 + 0.88 * osc : 1;
+  const spread = 1.8 + 6.2 * open;
+
+  ctx.save();
+  // soft voicing halo
+  if (voiced) {
+    const halo = 0.04 + 0.12 * vibAmp * (0.4 + 0.6 * osc);
+    ctx.beginPath();
+    ctx.ellipse(481, 534, 19, 10, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(143,180,122,${halo})`;
+    ctx.fill();
+  }
+  // laryngeal vestibule tint
+  ctx.beginPath();
+  ctx.ellipse(481, 534, 12, 6.2, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(143,180,122,.30)";
+  ctx.fill();
+
+  if (voiced) {
+    ctx.shadowColor = `rgba(143,180,122,${0.25 + 0.45 * vibAmp})`;
+    ctx.shadowBlur = 5 + 12 * vibAmp;
+  }
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(481 + s * spread, 534, 4.2, 6.4, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#8fb47a";
+    ctx.fill();
+    ctx.strokeStyle = "#4f6f3a";
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+
+  // glottis
+  ctx.beginPath();
+  ctx.ellipse(481, 534, 1.0 + 3.2 * open, 2.7, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#f6e7d2";
+  ctx.fill();
+  ctx.strokeStyle = "#4f6f3a";
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // pulse ring while voiced
+  if (voiced) {
+    const rr = 13 + 7 * osc;
+    ctx.beginPath();
+    ctx.ellipse(481, 534, rr, rr * 0.52, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(143,180,122,${0.14 + 0.30 * vibAmp})`;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function updateVibration(now) {
+  const voiced = !!latest && (now - lastVoicedAt < 120);
+  const conf = latest && latest.pitch != null ? latest.pitch : 0.6;
+  const target = voiced ? clamp(0.25 + 0.75 * conf, 0, 1) : 0;
+  vibAmp += (target - vibAmp) * 0.25;
+  if (vibAmp < 0.001) vibAmp = 0;
+  if (!voiced) return;
+
+  // Map F0 to a visible 5–12 Hz so the opening/closing reads at 60 fps.
+  const f0 = (latest && latest.f0) || 120;
+  const rate = clamp(f0 / 18, 5, 12);
+  vibPhase += 2 * Math.PI * rate / 60;
+  if (vibPhase > Math.PI * 2) vibPhase -= Math.PI * 2;
+}
+
+function drawMouthBackground() {
+  const A = anatPaths();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+
+  const skinGrad = ctx.createLinearGradient(160, 40, 620, 640);
+  skinGrad.addColorStop(0, "#fbe3d2");
+  skinGrad.addColorStop(0.6, "#f7d3bd");
+  skinGrad.addColorStop(1, "#efbfa7");
+  paintPath(A.head, skinGrad, ANAT.ink, 2.8);
+  drawJawOverlay(skinGrad);
+  paintPath(A.nasal, ANAT.mucosa, null, 0);
+  paintPath(buildOralPath(jawDropPx), ANAT.oral, null, 0);
+
+  // Nasal cavity outline: roof/front and floor are open at the choanae (the
+  // nasopharynx continues behind the velum).
+  ctx.strokeStyle = ANAT.ink;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(200, 316);
+  ctx.bezierCurveTo(200, 300, 210, 288, 228, 280);
+  ctx.bezierCurveTo(270, 264, 330, 258, 380, 266);
+  ctx.bezierCurveTo(420, 272, 446, 286, 458, 306);
+  ctx.bezierCurveTo(472, 312, 486, 318, 496, 330);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(200, 316);
+  ctx.bezierCurveTo(208, 322, 224, 322, 246, 318);
+  ctx.bezierCurveTo(286, 311, 338, 310, 386, 316);
+  ctx.bezierCurveTo(414, 320, 440, 328, 452, 340);
+  ctx.stroke();
+
+  // Palate (roof of the mouth), continuous posterior pharyngeal wall and floor.
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(256, 338);
+  ctx.bezierCurveTo(300, 336, 360, 336, 408, 340);
+  ctx.bezierCurveTo(436, 343, 454, 350, 468, 362);
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(496, 330);
+  ctx.bezierCurveTo(500, 350, 501, 372, 499, 394);
+  ctx.bezierCurveTo(498, 420, 496, 446, 494, 470);
+  ctx.bezierCurveTo(493, 490, 491, 510, 488, 528);
+  ctx.stroke();
+  const fl = jawDropPx * 0.7;
+  ctx.strokeStyle = "rgba(120, 78, 60, 0.55)";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(214, 460 + fl);
+  ctx.bezierCurveTo(228, 470 + fl, 240, 480 + fl, 256, 486 + fl);
+  ctx.bezierCurveTo(284, 500 + fl, 334, 506 + fl, 384, 502 + fl);
+  ctx.bezierCurveTo(424, 498 + fl, 456, 490 + fl, 468, 480 + fl);
+  ctx.stroke();
+
+  // nostril + alar crease
+  ctx.beginPath();
+  ctx.ellipse(150, 316, 11, 6, -0.5, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(17, 24, 39, 0.16)";
+  ctx.fill();
+  ctx.strokeStyle = ANAT.ink;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(138, 310);
+  ctx.bezierCurveTo(154, 303, 170, 305, 181, 313);
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  // mouth line between the lips on the cut edge
+  ctx.beginPath();
+  ctx.moveTo(160, 361);
+  ctx.bezierCurveTo(174, 362, 186, 363, 195, 365);
+  ctx.strokeStyle = ANAT.ink;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // soft turbinate folds inside the nasal cavity
+  ctx.save();
+  ctx.clip(A.nasal);
+  const folds = [
+    { y: 298, x0: 214, x1: 400, h: 7 },
+    { y: 312, x0: 220, x1: 420, h: 7 },
+    { y: 325, x0: 230, x1: 426, h: 6 },
+  ];
+  for (const f of folds) {
+    const p = new Path2D();
+    p.moveTo(f.x0, f.y);
+    p.bezierCurveTo(f.x0 + 60, f.y - 6, f.x1 - 60, f.y - 4, f.x1, f.y + 2);
+    p.bezierCurveTo(f.x1 + 4, f.y + 6, f.x1 - 24, f.y + f.h, f.x1 - 50, f.y + f.h);
+    p.bezierCurveTo(f.x0 + 80, f.y + f.h - 1, f.x0 + 40, f.y + f.h, f.x0, f.y + 4);
+    p.closePath();
+    ctx.fillStyle = "#e9a58f";
+    ctx.fill(p);
+    ctx.strokeStyle = "#c07a62";
+    ctx.lineWidth = 1;
+    ctx.stroke(p);
+  }
+  ctx.restore();
+
+  paintPath(A.velum, "#eab3a2", ANAT.ink, 2);
+    ctx.save();
+  ctx.translate(229, 336); ctx.scale(0.85, 0.75); ctx.translate(-229, -336);
+  paintPath(A.upperTeeth, ANAT.bone, ANAT.ink, 1.9);
+  ctx.restore();
+  ctx.save();
+  ctx.translate(0, jawDropPx * 0.9);
+  ctx.translate(228, 424); ctx.rotate(-0.02 * (jawDropPx / 16)); ctx.scale(0.85, 0.85); ctx.translate(-228, -424);
+  paintPath(A.lowerTeeth, ANAT.bone, ANAT.ink, 1.9);
+  ctx.restore();
+
+  // larynx, vocal folds, trachea
+  paintPath(A.larynx, "#f0cdbd", ANAT.ink, 2);
+  paintPath(A.airway, "#fff8ee", ANAT.ink, 1.5);
+  drawVocalFolds();
+
+  ctx.fillStyle = "#fff8ee";
+  ctx.fillRect(472, 560, 18, 80);
+  ctx.strokeStyle = ANAT.ink;
+  ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  ctx.moveTo(473, 566); ctx.lineTo(472, 640);
+  ctx.moveTo(489, 566); ctx.lineTo(490, 640);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(17, 24, 39, 0.22)";
+  ctx.lineWidth = 1.2;
+  for (let y = 580; y < 638; y += 16) {
+    ctx.beginPath(); ctx.moveTo(473, y); ctx.lineTo(489, y); ctx.stroke();
+  }
+
+  paintPath(A.epiglottis, "#e9b45a", "#a9792e", 1.8);
+  ctx.beginPath();
+  ctx.moveTo(480, 506);
+  ctx.quadraticCurveTo(492, 482, 500, 458);
+  ctx.strokeStyle = "rgba(140, 90, 30, .55)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+/* Per-vowel nudge for the target label, so the dense clusters stay legible. */
+const TARGET_NUDGE = {
+  m: { "i": [-10, 4], "ɪ": [8, 3], "ɛ": [14, 4], "æ": [-14, 4], "ɑ": [0, 12],
+       "ɔ": [8, -3], "ʊ": [8, 3], "u": [0, -12], "ʌ": [-8, -3], "ɝ": [0, -13] },
+  w: { "i": [0, -13], "ɪ": [8, 3], "ɛ": [14, 3], "æ": [-14, -2], "ɑ": [-2, 12],
+       "ɔ": [9, -4], "ʊ": [8, 3], "u": [0, -12], "ʌ": [-9, -2], "ɝ": [0, -13] },
+};
+
+function drawTongueChart() {
+  jawDropPx = camJaw * 22;
+  drawMouthBackground();
+
+  // history trail of past dorsum positions
+  for (let i = 0; i < userDots.length; i++) {
+    const d = userDots[i];
+    const [x, y] = tongueDorsumXY(d.f1, d.f2);
+    ctx.globalAlpha = 0.18 + 0.55 * (i / Math.max(1, userDots.length - 1));
+    ctx.fillStyle = "#f43f5e";
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // current tongue (midsagittal shape); faint resting ghost before the first vowel
+  if (latest) {
+    const silent = performance.now() - lastVoicedAt > 1200;
+    ctx.globalAlpha = silent ? 0.3 : 0.96;
+    drawTongueShape(latest.f1, latest.f2);
+    ctx.globalAlpha = 1;
+  } else {
+    drawTongueShape(500, 1500, true);
+  }
+
+  // reference vowels as dorsum targets, drawn on top so they stay visible
+  const refColor = gender === "m" ? "#2563eb" : "#7c3aed";
+  const nudges = TARGET_NUDGE[gender];
+  ctx.font = "700 12px -apple-system, system-ui, sans-serif";
+  ctx.textBaseline = "middle";
+  for (const v of VOWELS) {
+    const ref = gender === "m" ? v.m : v.w;
+    const [x, y] = tongueDorsumXY(ref.f1, ref.f2);
+    ctx.beginPath();
+    ctx.fillStyle = refColor;
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    const [ox, oy] = nudges[v.ipa] || [0, -12];
+    const tx = x + ox, ty = y + oy;
+    ctx.textAlign = ox > 2 ? "left" : ox < -2 ? "right" : "center";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+    ctx.lineWidth = 3.5;
+    ctx.strokeText(v.ipa, tx, ty);
+    ctx.fillStyle = refColor;
+    ctx.fillText(v.ipa, tx, ty);
+  }
+
+  drawTongueLabels();
+  drawCameraPanel();
+}
+
+/* Draw the tongue as a smooth midsagittal shape: tip behind the lower teeth,
+   dorsum ("bunch") at the vowel position, root at the pharynx, lower surface
+   resting on the mandible (no gap — it attaches via the genioglossus). */
+function drawTongueShape(f1, f2, ghost) {
+  const [dx, dy] = tongueDorsumXY(f1, f2);
+  const open = clamp((toBark(f1) - F1_BARK_LO) / (F1_BARK_HI - F1_BARK_LO), 0, 1);
+  const back = clamp((BDIFF_HI - (toBark(f2) - toBark(f1))) / (BDIFF_HI - BDIFF_LO), 0, 1);
+  const drop = jawDropPx * 0.8;
+  const tipY = 398 + 8 * back + drop * 0.55;
+  const rootX = 470, rootY = 410 + 12 * open + drop * 0.25;
+
+  const t = new Path2D();
+  t.moveTo(264, tipY - 26);
+  // upper surface: broad rounded tip → front dorsum → the bunch
+  t.bezierCurveTo(
+    280 + (dx - 280) * 0.25, tipY + (dy - tipY) * 0.2 - 20,
+    dx - 24, dy - 2,
+    dx, dy
+  );
+  // bunch → tongue root
+  t.bezierCurveTo(dx + 20, dy - 2, rootX - 20, rootY + 4, rootX, rootY);
+  // root → mouth floor → free underside of the tip
+  t.bezierCurveTo(472, 510 + drop, 440, 518 + drop, 384, 520 + drop);
+  t.bezierCurveTo(334, 522 + drop, 284, 516 + drop, 264, tipY + 26);
+  // broad rounded front (not a pointed or knob-like tip)
+  t.bezierCurveTo(248, tipY + 20, 246, tipY - 20, 264, tipY - 26);
+  t.closePath();
+
+  ctx.save();
+  ctx.clip(buildOralPath(jawDropPx));   // never spill outside the (jaw-aware) mouth
+
+  if (!ghost) {
+    ctx.shadowColor = "rgba(80, 30, 20, 0.18)";
+    ctx.shadowBlur = 7;
+    ctx.shadowOffsetY = 2;
+  }
+  if (ghost) {
+    ctx.fillStyle = "rgba(246, 179, 170, 0.14)";
+  } else {
+    const g = ctx.createLinearGradient(0, dy - 18, 0, 530);
+    g.addColorStop(0, "#f6b3aa");
+    g.addColorStop(1, "#e07b73");
+    ctx.fillStyle = g;
+  }
+  ctx.fill(t);
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  // genioglossus — fan of fibers from the mandible into the tongue body
+  ctx.save();
+  ctx.clip(t);
+  ctx.strokeStyle = ghost ? "rgba(140, 55, 48, 0.14)" : "rgba(140, 55, 48, 0.30)";
+  ctx.lineWidth = 1.3;
+  for (const [ex, ey] of [[320, 470 + drop * 0.6], [360, 486 + drop * 0.8], [402, 500 + drop * 0.9]]) {
+    ctx.beginPath();
+    ctx.moveTo(240, 492 + drop * 0.4);
+    ctx.quadraticCurveTo((240 + ex) / 2, (470 + ey) / 2 - 6, ex, ey);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // midline groove gives the flat fill a readable shape
+  if (!ghost) {
+    ctx.save();
+    ctx.clip(t);
+    ctx.strokeStyle = "rgba(140, 55, 48, 0.24)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(278, tipY + 2);
+    ctx.bezierCurveTo(312, dy + 18, 362, dy + 24, 432, dy + 28);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.setLineDash(ghost ? [6, 5] : []);
+  ctx.strokeStyle = ghost ? "rgba(168, 70, 62, 0.45)" : "#a8463e";
+  ctx.lineWidth = ghost ? 1.3 : 1.8;
+  ctx.stroke(t);
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/* Structure call-outs with arrow leaders. */
+function drawTongueLabels() {
+  ctx.strokeStyle = ANAT.ink;
+  ctx.lineWidth = 1.1;
+  ctx.font = "700 13.5px -apple-system, system-ui, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (const it of ANAT_LABELS) {
+    ctx.font = "700 " + (it.size || 13.5) + "px -apple-system, system-ui, sans-serif";
+    if (it.leader !== false) drawLeader(it.sx, it.sy, it.px, it.py);
+    ctx.textAlign = it.align || "left";
+    ctx.fillStyle = ANAT.label;
+    ctx.fillText(it.t, it.x, it.y);
+  }
+}
+
+/* ======================= Live readout ======================= */
+function updateReadout(f1, f2, f0, now) {
+  if (now - lastReadoutUpdate < 80) return;   // throttle
+  lastReadoutUpdate = now;
+  $("f1").textContent = Math.round(f1);
+  $("f2").textContent = Math.round(f2);
+  $("f0").textContent = Number.isFinite(f0) && f0 > 0 ? Math.round(f0) : "—";
+  $("voiceState").textContent = "voiced";
+  const { vowel, dist } = nearestVowel(f1, f2);
+  const st = $("status");
+  if (vowel) {
+    $("nearest").textContent = "/" + vowel.ipa + "/";
+    $("nearestWord").textContent = vowel.word;
+    $("dist").textContent = Math.round(dist);
+    let cls, msg;
+    if (dist < 120) { cls = "good"; msg = "Close to /" + vowel.ipa + "/ (" + vowel.word + ") — well within the norm."; }
+    else if (dist < 260) { cls = "warn"; msg = "Near /" + vowel.ipa + "/ (" + vowel.word + "), but with a noticeable deviation."; }
+    else { cls = "bad"; msg = "Far from the nearest reference /" + vowel.ipa + "/ (" + vowel.word + ") — production is deviated."; }
+    st.className = "status " + cls;
+    st.innerHTML = "<b>" + Math.round(f1) + " / " + Math.round(f2) + " Hz</b> &nbsp;·&nbsp; " + msg;
+  } else {
+    $("nearest").textContent = "—"; $("nearestWord").textContent = "";
+    $("dist").textContent = "—";
+    st.className = "status";
+    st.innerHTML = "Detected voice, but could not resolve F1/F2 reliably.";
+  }
+}
+
+function updateLevel(rms) {
+  const pct = Math.min(100, Math.round((rms / 0.25) * 100));
+  $("levelPct").textContent = pct + "%";
+  $("meterBar").style.width = pct + "%";
+}
+
+/* ======================= Audio pipeline ======================= */
+function configure(fs) {
+  p = Math.max(10, 2 + Math.round(fs / 1000));
+  maxLag = Math.max(Math.floor(fs / 70), p);
+  lpcA = new Float64Array(p + 1);
+  r = new Float64Array(maxLag + 1);
+  wbuf = new Float32Array(4096);
+  poly = new Float64Array(p + 1);
+  rootsRe = new Float64Array(p);
+  rootsIm = new Float64Array(p);
+  yinD = new Float64Array(maxLag + 1);
+  yinDP = new Float64Array(maxLag + 1);
+}
+
+function onAudioProcess(e) {
+  const input = e.inputBuffer.getChannelData(0);
+  const n = input.length;
+
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += input[i] * input[i];
+  updateLevel(Math.sqrt(sum / n));
+
+  if (isPlayingBack) return;   // don't record/analyze the replay itself
+
+  // record into the ring buffer
+  if (recBuf) {
+    for (let i = 0; i < n; i++) {
+      recBuf[recPos++] = input[i];
+      if (recPos >= recBuf.length) { recPos = 0; recFilled = true; }
+    }
+  }
+
+  const m = decimator.process(input, decOut);
+  if (m < 64) return;
+
+  const res = analyzeFrame(decOut, m, fs2);
+  const now = performance.now();
+  if (res) {
+    lastVoicedAt = now;
+    const stable = tongueTracker.push(res.f1, res.f2, now);
+    if (stable) {
+      latest = { ...res, f1: stable.f1, f2: stable.f2 };
+      recentPoints.push({ f1: stable.f1, f2: stable.f2 });
+      updateReadout(stable.f1, stable.f2, res.f0, now);
+    } else {
+      // Voiced, but the formants were rejected: keep the last good tongue,
+      // still show that the folds are vibrating.
+      $("f0").textContent = res.f0 > 0 ? Math.round(res.f0) : "—";
+      $("voiceState").textContent = "voiced";
+    }
+  } else if (now - lastVoicedAt > 120) {
+    $("f0").textContent = "—";
+    $("voiceState").textContent = "silent";
+    if (now - lastReadoutUpdate > 500) {
+      $("status").className = "status";
+      $("status").innerHTML = "Listening… (no sustained voiced vowel detected)";
+      lastReadoutUpdate = now;
+    }
+  }
+}
+
+function placeDot() {
+  if (!recentPoints.length) return;
+  const f1 = median(recentPoints.map(p => p.f1));
+  const f2 = median(recentPoints.map(p => p.f2));
+  if (f1 == null || f2 == null) return;
+  userDots.push({ f1, f2 });
+  recentPoints = [];
+  drawChart();
+}
+
+function playBack() {
+  if (!audioCtx || isPlayingBack || !recBuf) return;
+  const want = Math.floor(audioCtx.sampleRate * PLAY_SECONDS);
+  const total = recFilled ? recBuf.length : recPos;
+  const count = Math.min(want, total);
+  if (count < Math.floor(audioCtx.sampleRate * 0.05)) return;   // < 50 ms recorded
+
+  const data = new Float32Array(count);
+  const start = (recPos - count + recBuf.length) % recBuf.length;
+  for (let i = 0; i < count; i++) data[i] = recBuf[(start + i) % recBuf.length];
+
+  const buf = audioCtx.createBuffer(1, count, audioCtx.sampleRate);
+  buf.copyToChannel(data, 0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const g = audioCtx.createGain();
+  g.gain.value = 0.9;
+  src.connect(g);
+  g.connect(audioCtx.destination);
+
+  isPlayingBack = true;
+  btnPlay.textContent = "⏸ Playing…";
+  btnPlay.disabled = true;
+  src.onended = () => {
+    isPlayingBack = false;
+    btnPlay.textContent = "▶ Play back (3 s)";
+    btnPlay.disabled = false;
+  };
+  src.start();
+}
+
+/* ======================= Start / stop ======================= */
+async function start() {
+  errEl.style.display = "none";
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+  } catch (err) {
+    showErr("Microphone access denied or unavailable. Run this page over http://localhost (or https) and allow mic access. (" + err.name + ")");
+    return;
+  }
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
+
+  const fsFull = audioCtx.sampleRate;
+  const factor = Math.max(1, Math.round(fsFull / 16000));
+  fs2 = fsFull / factor;
+  configure(fs2);
+  decimator = new Decimator(factor);
+  decOut = new Float32Array(Math.ceil(BUFFER_SIZE / factor) + 2);
+  recBuf = new Float32Array(Math.floor(fsFull * REC_SECONDS));
+  recPos = 0;
+  recFilled = false;
+
+  sourceNode = audioCtx.createMediaStreamSource(stream);
+  scriptNode = audioCtx.createScriptProcessor(BUFFER_SIZE, 1, 1);
+  scriptNode.onaudioprocess = onAudioProcess;
+  muteNode = audioCtx.createGain();
+  muteNode.gain.value = 0;   // don't play mic back through speakers
+
+  sourceNode.connect(scriptNode);
+  scriptNode.connect(muteNode);
+  muteNode.connect(audioCtx.destination);
+
+  running = true;
+  tongueTracker.reset();
+  btnStart.textContent = "■ Stop";
+  btnStart.classList.add("running");
+  btnPlay.disabled = false;
+  dotTimer = setInterval(placeDot, dotIntervalMs);
+  $("status").className = "status";
+  $("status").innerHTML = "Recording at " + Math.round(fsFull) + " Hz (analysis " + Math.round(fs2) + " Hz). Speak a sustained vowel.";
+}
+
+function stop() {
+  running = false;
+  tongueTracker.reset();
+  if (dotTimer) { clearInterval(dotTimer); dotTimer = null; }
+  if (scriptNode) { scriptNode.disconnect(); scriptNode.onaudioprocess = null; scriptNode = null; }
+  if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+  if (muteNode) { muteNode.disconnect(); muteNode = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  isPlayingBack = false;
+  btnPlay.disabled = true;
+  btnPlay.textContent = "▶ Play back (3 s)";
+  btnStart.textContent = "▶ Start microphone";
+  btnStart.classList.remove("running");
+  $("status").className = "status";
+  $("status").innerHTML = "Stopped.";
+  $("f0").textContent = "—";
+  $("voiceState").textContent = "silent";
+}
+
+function showErr(msg) {
+  errEl.textContent = msg;
+  errEl.style.display = "block";
+}
+
+/* ======================= Front camera (jaw) ======================= */
+/* Optional MediaPipe Face Landmarker. It only reads the jaw-open blendshape;
+   the video is drawn back into the chart as a picture-in-picture panel and
+   never leaves the page. */
+
+function setCamHint(t) { $("camHint").textContent = t; }
+
+function camRoundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+async function ensureCamModel() {
+  if (camModel) return camModel;
+  const mp = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${CAM_VERSION}/vision_bundle.mjs`);
+  const vision = await mp.FilesetResolver.forVisionTasks(CAM_WASM);
+  const common = {
+    runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
+    baseOptions: { modelAssetPath: CAM_MODEL }
+  };
+  try {
+    camModel = await mp.FaceLandmarker.createFromOptions(vision,
+      { ...common, baseOptions: { ...common.baseOptions, delegate: "GPU" } });
+  } catch (e) {
+    camModel = await mp.FaceLandmarker.createFromOptions(vision,
+      { ...common, baseOptions: { ...common.baseOptions, delegate: "CPU" } });
+  }
+  return camModel;
+}
+
+async function camStart() {
+  if (camBusy || camOn) return;
+  camBusy = true;
+  btnCam.disabled = true;
+  errEl.style.display = "none";
+  btnCam.textContent = "◉ Starting…";
+  setCamHint("Camera: requesting permission…");
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("getUserMedia is not available in this browser");
+    }
+    camStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
+    });
+    camVideoEl.srcObject = camStream;
+    await camVideoEl.play();
+    setCamHint("Camera: loading face model…");
+    await ensureCamModel();
+    camOn = true;
+    camBusy = false;
+    btnCam.disabled = false;
+    if (scaleMode !== "tongue") setScale("tongue");
+    btnCam.classList.add("active");
+    btnCam.textContent = "◉ Camera on";
+    setCamHint("Camera on — the jaw follows your jaw. Video stays on this device.");
+    camTick();
+  } catch (e) {
+    camBusy = false;
+    camOn = false;
+    camJawRaw = 0;
+    btnCam.disabled = false;
+    if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+    camVideoEl.srcObject = null;
+    btnCam.classList.remove("active");
+    btnCam.textContent = "◉ Camera";
+    setCamHint("Camera unavailable: " + e.message);
+    showErr("Camera: " + e.message + ". The audio-only view still works.");
+  }
+}
+
+function camStop() {
+  camOn = false;
+  camBusy = false;
+  btnCam.disabled = false;
+  camJawRaw = 0;
+  camLandmarks = null;
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  camVideoEl.srcObject = null;
+  btnCam.classList.remove("active");
+  btnCam.textContent = "◉ Camera";
+  setCamHint("Camera off — the jaw follows the camera when enabled.");
+}
+
+function camTick() {
+  if (!camOn) return;
+  if (camModel && camVideoEl.readyState >= 2) {
+    try {
+      const res = camModel.detectForVideo(camVideoEl, performance.now());
+      if (res.faceLandmarks && res.faceLandmarks.length) {
+        camLandmarks = res.faceLandmarks[0];
+        const cats = res.faceBlendshapes && res.faceBlendshapes[0]
+          ? res.faceBlendshapes[0].categories : null;
+        let jaw = 0;
+        if (cats) for (const c of cats) if (c.categoryName === "jawOpen") jaw = c.score;
+        camJawRaw = clamp(jaw, 0, 1);
+      } else {
+        camLandmarks = null;
+        camJawRaw = 0;
+      }
+    } catch (e) { /* keep the loop alive */ }
+  }
+  if (typeof camVideoEl.requestVideoFrameCallback === "function") {
+    camVideoEl.requestVideoFrameCallback(camTick);
+  } else {
+    setTimeout(camTick, 33);      // Safari fallback: ~30 fps
+  }
+}
+
+function updateJaw() {
+  if (jawForced != null) {
+    camJaw = jawForced;                 // test hook: no smoothing
+  } else {
+    const target = camOn ? camJawRaw : 0;
+    camJaw += (target - camJaw) * 0.18;
+    if (camJaw < 0.001) camJaw = 0;
+  }
+  const now = performance.now();
+  if (now - camLastUi > 100) {
+    camLastUi = now;
+    $("jawVal").textContent = Math.round(camJaw * 100) + "%";
+    $("jawBar").style.width = Math.round(camJaw * 100) + "%";
+    $("jawState").textContent = jawForced != null
+      ? "forced (test)"
+      : camOn ? (camJawRaw > 0.02 ? "camera" : "no face") : (camBusy ? "starting…" : "camera off");
+  }
+}
+
+/* Picture-in-picture panel drawn into the chart canvas. */
+const CAM_LIP_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
+const CAM_LIP_INNER = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191];
+
+function drawCamLandmarks(x, y, w, h) {
+  const X = p => x + (1 - p.x) * w;
+  const Y = p => y + p.y * h;
+  const stroke = (idx, color, lw) => {
+    ctx.beginPath();
+    idx.forEach((i, k) => {
+      const p = camLandmarks[i];
+      if (!p) return;
+      if (k) ctx.lineTo(X(p), Y(p)); else ctx.moveTo(X(p), Y(p));
+    });
+    ctx.closePath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.stroke();
+  };
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  stroke(CAM_LIP_OUTER, "rgba(18,10,8,.55)", 2.6);
+  stroke(CAM_LIP_OUTER, "rgba(255,255,255,.95)", 1.3);
+  stroke(CAM_LIP_INNER, "rgba(255,190,170,.95)", 1.1);
+  ctx.restore();
+}
+
+function drawCameraPanel() {
+  if (!camOn && !camBusy) return;
+  const { x, y, w, h } = CAM_PANEL;
+  ctx.save();
+  ctx.shadowColor = "rgba(40,20,10,.22)";
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 3;
+  camRoundRect(x, y, w, h, 12);
+  ctx.fillStyle = "#1f1a17";
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
+  ctx.save();
+  camRoundRect(x, y, w, h, 12);
+  ctx.clip();
+  if (camVideoEl.readyState >= 2) {
+    ctx.save();
+    ctx.translate(x + w, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(camVideoEl, 0, 0, w, h);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = "#2a2320";
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = "rgba(255,255,255,.75)";
+    ctx.font = "12px -apple-system, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("camera starting…", x + w / 2, y + h / 2);
+  }
+  if (camLandmarks) drawCamLandmarks(x, y, w, h);
+  ctx.restore();
+
+  camRoundRect(x, y, w, h, 12);
+  ctx.strokeStyle = "rgba(255,255,255,.88)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // label chip
+  camRoundRect(x + 8, y + 8, 46, 18, 6);
+  ctx.fillStyle = "rgba(20,12,10,.58)";
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("FRONT", x + 14, y + 17);
+
+  if (camOn && !camLandmarks) {
+    ctx.fillStyle = "rgba(20,12,10,.55)";
+    camRoundRect(x + w - 66, y + 8, 58, 18, 6);
+    ctx.fill();
+    ctx.fillStyle = "#ffd9c9";
+    ctx.font = "600 10px -apple-system, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("no face", x + w - 37, y + 17);
+  }
+  ctx.restore();
+}
+
+/* ======================= UI wiring ======================= */
+btnStart.addEventListener("click", () => { running ? stop() : start(); });
+btnCam.addEventListener("click", () => {
+  if (camBusy) return;
+  camOn ? camStop() : camStart();
+});
+btnClear.addEventListener("click", () => { userDots = []; recentPoints = []; drawChart(); });
+
+function setGender(g) {
+  gender = g;
+  btnMale.classList.toggle("active", g === "m");
+  btnFemale.classList.toggle("active", g === "w");
+  drawChart();
+}
+btnMale.addEventListener("click", () => setGender("m"));
+btnFemale.addEventListener("click", () => setGender("w"));
+
+btnPlay.addEventListener("click", playBack);
+
+function setScale(mode) {
+  scaleMode = mode;
+  btnTongue.classList.toggle("active", mode === "tongue");
+  btnBark.classList.toggle("active", mode === "bark");
+  btnLinear.classList.toggle("active", mode === "linear");
+  $("scaleHint").textContent = mode === "tongue"
+    ? "Tongue position: F1 = height (close ↑ / open ↓) · F2−F1 (Bark) = backness (front ← / back →)"
+    : mode === "bark"
+      ? "F1 (height) × F2 (backness) on a Bark scale"
+      : "F1 × F2 in linear Hz";
+  drawChart();
+}
+btnTongue.addEventListener("click", () => setScale("tongue"));
+btnBark.addEventListener("click", () => setScale("bark"));
+btnLinear.addEventListener("click", () => setScale("linear"));
+
+intervalInput.addEventListener("input", () => {
+  dotIntervalMs = parseInt(intervalInput.value, 10);
+  intervalVal.textContent = (dotIntervalMs / 1000).toFixed(1) + " s";
+  $("howtoInterval").textContent = (dotIntervalMs / 1000).toFixed(1);
+  if (running && dotTimer) { clearInterval(dotTimer); dotTimer = setInterval(placeDot, dotIntervalMs); }
+});
+
+// Secure-context guard (getUserMedia requires https or localhost).
+if (!window.isSecureContext) {
+  showErr("Microphone requires a secure context. Open this file via a local server (e.g. `python3 -m http.server` and visit http://localhost:8000) or over https.");
+}
+
+// Rendering test hooks (used for headless screenshot verification):
+//   ?demo=342,2322  freezes the tongue at those formants
+//   ?gender=w       selects the women reference set
+//   ?view=bark      opens a cartesian chart (tongue | bark | linear)
+//   ?jaw=0.6        forces a jaw opening (0..1) for headless checks
+//   ?camera=1       starts the front camera automatically (headless checks)
+const params = new URLSearchParams(location.search);
+const demo = params.get("demo");
+if (demo) {
+  const [df1, df2] = demo.split(",").map(Number);
+  if (isFinite(df1) && isFinite(df2)) {
+    latest = { f1: df1, f2: df2 };
+    lastVoicedAt = performance.now() + 1e9;
+  }
+}
+if (params.get("gender") === "w") setGender("w");
+if (["bark", "linear"].includes(params.get("view"))) setScale(params.get("view"));
+const jawParam = parseFloat(params.get("jaw"));
+if (isFinite(jawParam)) jawForced = clamp(jawParam, 0, 1);
+if (params.get("camera") === "1") setTimeout(camStart, 400);
+
+window.__vt = { voiceDbg: () => voiceDbg, tongueTracker };
+
+// Render loop — keeps the tongue figure animated and responsive.
+function renderLoop() {
+  updateJaw();
+  updateVibration(performance.now());
+  drawChart();
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
+</script>
+</body>
+</html>

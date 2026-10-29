@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lip Lab — frontal camera → lip parameters</title>
+<style>
+  :root{
+    --paper:#faf6f1; --card:#ffffff; --ink:#5d4032; --muted:#8a7264;
+    --line:#ecdfd4; --coral:#e07b73; --coral-dark:#a8463e;
+    --violet:#6d28d9; --blue:#2563eb; --rose:#be123c; --teal:#0f766e; --amber:#b45309;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--paper);color:var(--ink);
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  header{padding:20px 24px 8px}
+  h1{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em}
+  header p{margin:4px 0 0;color:var(--muted);font-size:13px;max-width:72ch}
+  main{display:grid;grid-template-columns:minmax(340px,1fr) minmax(420px,1.15fr);
+    gap:18px;padding:14px 24px 28px;align-items:start}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 1px 2px rgba(93,64,50,.05)}
+  .video-panel{padding:12px}
+  .video-wrap{position:relative;background:#211b18;border-radius:10px;overflow:hidden;
+    aspect-ratio:4/3;isolation:isolate}
+  video{position:relative;z-index:1;width:100%;height:100%;object-fit:cover;display:block;
+    transform:scaleX(-1)}
+  #overlay{position:absolute;z-index:2;inset:0;width:100%;height:100%;pointer-events:none}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  button,select{font:inherit;color:var(--ink);background:#fff;border:1px solid var(--line);
+    border-radius:9px;padding:7px 12px;cursor:pointer}
+  button:hover:not(:disabled){border-color:#d9c4b5;background:#fffdfb}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--coral);border-color:var(--coral);color:#fff;font-weight:600}
+  button.primary:hover:not(:disabled){background:#d86c64}
+  button.ghost{background:transparent}
+  .status{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--muted)}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;
+    background:#f3ece6;font-weight:600;font-size:12px;color:var(--ink)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#b9a99d}
+  .dot.on{background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.15)}
+  .dot.warn{background:var(--amber)}
+  .dot.err{background:#dc2626}
+  .log{margin-top:10px;background:#fbf7f2;border:1px dashed var(--line);border-radius:10px;
+    padding:8px 10px;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#7a6255;max-height:96px;overflow:auto;white-space:pre-wrap}
+  .readout{padding:14px}
+  .meters{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+  @media (max-width:1100px){.meters{grid-template-columns:1fr}}
+  .meter{display:grid;grid-template-columns:82px 1fr 44px;align-items:center;gap:8px}
+  .meter label{font-size:12px;color:var(--muted)}
+  .track{height:9px;background:#f1e8e0;border-radius:999px;overflow:hidden;position:relative}
+  .fill{position:absolute;inset:0 auto 0 0;width:50%;background:var(--coral);
+    border-radius:999px;transition:width .08s linear}
+  .meter .val{font:11px/1 ui-monospace,Menlo,monospace;text-align:right;color:#7a6255}
+  .widgets{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .widgets canvas{width:100%;height:auto;background:#fff;border:1px solid var(--line);
+    border-radius:10px}
+  .caption{font-size:11px;color:var(--muted);text-align:center;margin:4px 0 0}
+  .chart-wrap{margin-top:14px}
+  #chart{width:100%;height:auto;background:#fff;border:1px solid var(--line);border-radius:10px}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;
+    vertical-align:middle}
+  .raw{margin-top:12px;font:11px/1.6 ui-monospace,Menlo,monospace;color:#7a6255;
+    display:grid;grid-template-columns:repeat(4,1fr);gap:2px 12px}
+  .raw span b{color:var(--ink);font-weight:600}
+  .hint{margin-top:12px;padding:10px 12px;background:#fdf8f3;border:1px solid var(--line);
+    border-radius:10px;font-size:12px;color:#7a6255}
+  .hint b{color:var(--ink)}
+  .rec{background:#be123c;border-color:#be123c;color:#fff}
+  .rec:hover:not(:disabled){background:#a30f33}
+</style>
+</head>
+<body>
+<header>
+  <h1>Lip Lab</h1>
+  <p>Frontal camera → lip aperture, rounding, spreading, protrusion and jaw. A standalone
+  probe for the Vowel Formant Tracker: everything runs on-device, nothing is uploaded.</p>
+</header>
+
+<main>
+  <section class="card video-panel">
+    <div class="video-wrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="controls">
+      <button id="btnStart" class="primary">Start camera</button>
+      <button id="btnStop" disabled>Stop</button>
+      <button id="btnNeutral" disabled>Set neutral (1 s)</button>
+      <button id="btnRec" disabled class="ghost">Record CSV</button>
+      <button id="btnDownload" disabled class="ghost">Download</button>
+      <select id="device" title="Camera"></select>
+    </div>
+    <div class="status">
+      <span class="pill"><span id="dot" class="dot"></span><span id="stateText">idle</span></span>
+      <span id="statusText">Camera off.</span>
+    </div>
+    <div id="log" class="log">ready</div>
+  </section>
+
+  <section class="card readout">
+    <div class="meters">
+      <div class="meter"><label>Aperture</label><div class="track"><div class="fill" id="mAperture" style="background:var(--amber)"></div></div><div class="val" id="vAperture">0.00</div></div>
+      <div class="meter"><label>Rounding</label><div class="track"><div class="fill" id="mRound" style="background:var(--violet)"></div></div><div class="val" id="vRound">0.50</div></div>
+      <div class="meter"><label>Spreading</label><div class="track"><div class="fill" id="mSpread" style="background:var(--blue)"></div></div><div class="val" id="vSpread">0.50</div></div>
+      <div class="meter"><label>Protrusion</label><div class="track"><div class="fill" id="mProt" style="background:var(--rose)"></div></div><div class="val" id="vProt">0.50</div></div>
+      <div class="meter"><label>Jaw</label><div class="track"><div class="fill" id="mJaw" style="background:var(--teal)"></div></div><div class="val" id="vJaw">0.00</div></div>
+      <div class="meter"><label>Width ×</label><div class="track"><div class="fill" id="mWidth" style="background:#8a7264"></div></div><div class="val" id="vWidth">1.00</div></div>
+    </div>
+
+    <div class="widgets">
+      <div>
+        <canvas id="front" width="300" height="200"></canvas>
+        <p class="caption">front view (from landmarks)</p>
+      </div>
+      <div>
+        <canvas id="side" width="300" height="200"></canvas>
+        <p class="caption">sagittal lip profile (preview)</p>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="chart" width="620" height="180"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--violet)"></i>rounding</span>
+        <span><i style="background:var(--blue)"></i>spreading</span>
+        <span><i style="background:var(--rose)"></i>protrusion</span>
+        <span><i style="background:var(--teal)"></i>jaw</span>
+        <span><i style="background:var(--amber)"></i>aperture ×2</span>
+      </div>
+    </div>
+
+    <div class="raw" id="raw">
+      <span>aperture <b id="rAp">–</b></span>
+      <span>width <b id="rW">–</b></span>
+      <span>z-rel <b id="rZ">–</b></span>
+      <span>fps <b id="rFps">–</b></span>
+      <span>pucker <b id="rPucker">–</b></span>
+      <span>funnel <b id="rFunnel">–</b></span>
+      <span>stretch <b id="rStretch">–</b></span>
+      <span>smile <b id="rSmile">–</b></span>
+      <span>roll U/L <b id="rRoll">–</b></span>
+      <span>jawOpen <b id="rJaw">–</b></span>
+      <span>yaw <b id="rYaw">–</b></span>
+      <span>pitch <b id="rPitch">–</b></span>
+    </div>
+
+    <div class="hint">
+      <b>How to test:</b> sit ~50 cm from the camera in even front light, face it straight,
+      click <b>Set neutral</b> with a relaxed face, then sustain /i/ (spread), /u/ (rounded,
+      protruded), /ɔ/ (rounded, less protruded) and /ɑ/ (neutral, open jaw). Record CSV, then
+      check that the traces move in the expected direction and stay stable. If the protrusion
+      trace is dominated by noise, it will stay a secondary badge.
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------ *
+ * Lip Lab — MediaPipe Face Landmarker → lip parameters
+ * Classic script (no import statement) so it can be syntax-checked
+ * with `new Function(src)`; the MediaPipe module is loaded with
+ * dynamic import().
+ * ------------------------------------------------------------------ */
+
+const MP_VERSION = "0.10.14";
+const WASM_ROOT = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+const $ = (id) => document.getElementById(id);
+const video = $("video");
+const overlay = $("overlay");
+const octx = overlay.getContext("2d");
+const frontC = $("front"), front = frontC.getContext("2d");
+const sideC = $("side"), side = sideC.getContext("2d");
+const chartC = $("chart"), chart = chartC.getContext("2d");
+
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+const median = (a) => {
+  if (!a.length) return 0;
+  const s = a.slice().sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+const fmt = (v, d = 3) => Number.isFinite(v) ? v.toFixed(d) : "–";
+
+const S = {
+  landmarker: null, stream: null, running: false, modelReady: false,
+  lastVideoTime: -1, lm: null, bs: {}, feat: null,
+  neutral: null, neutralSamples: [], neutralUntil: 0, autoNeutralFrames: 0,
+  params: { aperture: 0, widthN: 1, round: 0.5, spread: 0.5, prot: 0.5, jaw: 0 },
+  raw: { aperture: 0, width: 0, zRel: 0, pucker: 0, funnel: 0, stretch: 0, smile: 0,
+         rollU: 0, rollL: 0, jawOpen: 0, yaw: 0, pitch: 0 },
+  hist: [], rec: { on: false, rows: [], t0: 0 }, lastUi: 0, lastRec: 0,
+  frames: 0, fps: 0, fpsT: 0, noFace: 0, firstFaceLogged: false
+};
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  const line = `${t}  ${msg}`;
+  console.log(line);
+  const el = $("log");
+  el.textContent = (el.textContent === "ready" ? "" : el.textContent + "\n") + line;
+  const lines = el.textContent.split("\n");
+  if (lines.length > 8) el.textContent = lines.slice(-8).join("\n");
+  el.scrollTop = el.scrollHeight;
+}
+
+function setState(text, cls) {
+  $("stateText").textContent = text;
+  $("dot").className = "dot" + (cls ? " " + cls : "");
+}
+
+/* ------------------------------ camera ------------------------------ */
+
+async function listDevices() {
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const cams = all.filter(d => d.kind === "videoinput");
+    const sel = $("device");
+    sel.innerHTML = "";
+    cams.forEach((c, i) => {
+      const o = document.createElement("option");
+      o.value = c.deviceId;
+      o.textContent = c.label || `Camera ${i + 1}`;
+      sel.appendChild(o);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error("getUserMedia is not available in this browser.");
+  }
+  if (!window.isSecureContext) {
+    throw new Error("Camera needs a secure context. Serve this folder over http://localhost.");
+  }
+  const sel = $("device").value;
+  const constraints = {
+    audio: false,
+    video: sel
+      ? { deviceId: { exact: sel }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
+      : { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
+  };
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+  S.stream = stream;
+  video.srcObject = stream;
+  await video.play();
+  overlay.width = video.videoWidth || 640;
+  overlay.height = video.videoHeight || 480;
+  await listDevices();
+  log(`camera ${video.videoWidth}×${video.videoHeight} @ ${(stream.getVideoTracks()[0].getSettings().frameRate || 0)} fps`);
+}
+
+function stopCamera() {
+  if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+  S.stream = null;
+  video.srcObject = null;
+}
+
+/* ------------------------------ model ------------------------------- */
+
+async function loadModel() {
+  log("importing MediaPipe module…");
+  const mp = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`);
+  log("module loaded; fetching wasm…");
+  const vision = await mp.FilesetResolver.forVisionTasks(WASM_ROOT);
+  log("wasm ready; building landmarker…");
+  const base = { modelAssetPath: MODEL_URL };
+  const common = {
+    runningMode: "VIDEO", numFaces: 1,
+    outputFaceBlendshapes: true, outputFacialTransformationMatrixes: true
+  };
+  try {
+    S.landmarker = await mp.FaceLandmarker.createFromOptions(vision,
+      { baseOptions: { ...base, delegate: "GPU" }, ...common });
+    log("model ready (GPU)");
+  } catch (e) {
+    log("GPU delegate unavailable, falling back to CPU");
+    S.landmarker = await mp.FaceLandmarker.createFromOptions(vision,
+      { baseOptions: { ...base, delegate: "CPU" }, ...common });
+    log("model ready (CPU)");
+  }
+  S.modelReady = true;
+}
+
+/* --------------------------- measurements --------------------------- */
+
+function d2(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+function measure(lm, bs) {
+  const iod = d2(lm[33], lm[263]) || 1e-6;         // outer eye corners
+  const faceW = d2(lm[234], lm[454]) || iod;       // cheek to cheek
+  const aperture = d2(lm[13], lm[14]) / iod;       // inner lip gap
+  const width = d2(lm[61], lm[291]) / faceW;       // mouth corners / face width
+  const zLip = (lm[13].z + lm[14].z) / 2;
+  const zRef = (lm[1].z + lm[152].z + lm[168].z) / 3;  // nose tip, chin, bridge
+  const zRel = (zRef - zLip) / iod;
+  const eyeMidX = (lm[33].x + lm[263].x) / 2;
+  const eyeMidY = (lm[33].y + lm[263].y) / 2;
+  const yaw = (lm[1].x - eyeMidX) / iod;
+  const pitch = (lm[1].y - eyeMidY) / iod;
+  const g = (n) => bs[n] || 0;
+  return {
+    iod, faceW, aperture, width, zRel, yaw, pitch,
+    pucker: g("mouthPucker"), funnel: g("mouthFunnel"),
+    rollU: g("mouthRollUpper"), rollL: g("mouthRollLower"),
+    stretch: (g("mouthStretchLeft") + g("mouthStretchRight")) / 2,
+    smile: (g("mouthSmileLeft") + g("mouthSmileRight")) / 2,
+    jawOpen: g("jawOpen"),
+    press: (g("mouthPressLeft") + g("mouthPressRight")) / 2
+  };
+}
+
+function captureNeutral(f) {
+  S.neutral = {
+    aperture: f.aperture, width: f.width, zRel: f.zRel,
+    pucker: f.pucker, funnel: f.funnel, rollU: f.rollU, rollL: f.rollL,
+    roll: (f.rollU + f.rollL) / 2, stretch: f.stretch, smile: f.smile, jawOpen: f.jawOpen,
+    yaw: f.yaw || 0, pitch: f.pitch || 0
+  };
+  log("neutral baseline captured");
+  $("btnNeutral").textContent = "Set neutral (1 s)";
+}
+
+function derive(f, n) {
+  const dWidth = (f.width - n.width) / Math.max(n.width, 1e-6);
+  const roll = (f.rollU + f.rollL) / 2;
+  const round = clamp(0.5 - 1.2 * dWidth + 0.35 * (f.pucker - n.pucker) + 0.2 * (f.funnel - n.funnel), 0, 1);
+  const spread = clamp(0.5 + 1.2 * dWidth + 0.35 * (f.stretch - n.stretch) + 0.25 * (f.smile - n.smile), 0, 1);
+  const prot = clamp(0.5 + 20 * (f.zRel - n.zRel)
+                        + 0.35 * ((f.pucker - n.pucker) - (f.funnel - n.funnel))
+                        + 0.25 * (roll - n.roll), 0, 1);
+  const jaw = clamp(f.jawOpen * 1.5, 0, 1);
+  return { aperture: f.aperture, widthN: f.width / Math.max(n.width, 1e-6), round, spread, prot, jaw };
+}
+
+/* ------------------------------ render ------------------------------ */
+
+const OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
+const INNER = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191];
+
+function drawOverlay() {
+  const W = overlay.width, H = overlay.height;
+  octx.clearRect(0, 0, W, H);
+  if (!S.lm) return;
+  const X = (p) => (1 - p.x) * W, Y = (p) => p.y * H;
+  const path = (idx, close) => {
+    octx.beginPath();
+    idx.forEach((i, k) => {
+      const p = S.lm[i];
+      if (k) octx.lineTo(X(p), Y(p)); else octx.moveTo(X(p), Y(p));
+    });
+    if (close) octx.closePath();
+  };
+  octx.lineJoin = "round"; octx.lineCap = "round";
+  const stroke = (idx, color, width) => {
+    path(idx, true); octx.strokeStyle = color; octx.lineWidth = width; octx.stroke();
+  };
+  stroke(OUTER, "rgba(18,10,8,0.55)", 4.2);
+  stroke(OUTER, "rgba(255,255,255,0.95)", 2.0);
+  stroke(INNER, "rgba(18,10,8,0.45)", 3.0);
+  stroke(INNER, "rgba(255,190,170,0.95)", 1.4);
+  for (const i of [61, 291, 13, 14]) {
+    const p = S.lm[i];
+    octx.beginPath(); octx.arc(X(p), Y(p), 4, 0, Math.PI * 2);
+    octx.fillStyle = "rgba(18,10,8,0.5)"; octx.fill();
+    octx.beginPath(); octx.arc(X(p), Y(p), 2.6, 0, Math.PI * 2);
+    octx.fillStyle = "#ffd9c9"; octx.fill();
+  }
+}
+
+function drawFront() {
+  const w = frontC.width, h = frontC.height, p = S.params;
+  front.clearRect(0, 0, w, h);
+  front.fillStyle = "#fff"; front.fillRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2 + 6;
+  const halfW = 70 * clamp(p.widthN, 0.72, 1.35);
+  const ap = clamp(p.aperture, 0, 0.12);
+  const round = p.round, spread = p.spread, prot = p.prot;
+  const openH = 4 + ap * 220 * (0.8 + 0.4 * round);
+  const ow = Math.max(10, halfW * (0.55 - 0.18 * round));
+  const oh = Math.max(1.5, openH * (0.55 + 0.45 * round));
+  const lipT = 12 * (1.18 - 0.35 * spread) * (1 + 0.30 * round) * (1 + 0.15 * (prot - 0.5));
+
+  // outer lip body
+  const g = front.createLinearGradient(0, cy - 45, 0, cy + 50);
+  g.addColorStop(0, "#f6b3aa"); g.addColorStop(1, "#e07b73");
+  front.beginPath();
+  front.moveTo(cx - halfW, cy);
+  front.bezierCurveTo(cx - halfW * 0.72, cy - lipT * 1.25, cx - halfW * 0.26, cy - lipT * 1.45, cx, cy - lipT * 1.05);
+  front.bezierCurveTo(cx + halfW * 0.26, cy - lipT * 1.45, cx + halfW * 0.72, cy - lipT * 1.25, cx + halfW, cy);
+  front.bezierCurveTo(cx + halfW * 0.72, cy + lipT * 1.35, cx + halfW * 0.26, cy + lipT * 1.55, cx, cy + lipT * 1.12);
+  front.bezierCurveTo(cx - halfW * 0.26, cy + lipT * 1.55, cx - halfW * 0.72, cy + lipT * 1.35, cx - halfW, cy);
+  front.closePath(); front.fillStyle = g; front.fill();
+  front.strokeStyle = "#a8463e"; front.lineWidth = 1.6; front.stroke();
+
+  // inner opening
+  const opening = () => {
+    const r = Math.min(ow, oh) * 0.55;
+    front.beginPath();
+    front.moveTo(cx - ow + r, cy - oh);
+    front.lineTo(cx + ow - r, cy - oh);
+    front.quadraticCurveTo(cx + ow, cy - oh, cx + ow, cy - oh + r);
+    front.lineTo(cx + ow, cy + oh - r);
+    front.quadraticCurveTo(cx + ow, cy + oh, cx + ow - r, cy + oh);
+    front.lineTo(cx - ow + r, cy + oh);
+    front.quadraticCurveTo(cx - ow, cy + oh, cx - ow, cy + oh - r);
+    front.lineTo(cx - ow, cy - oh + r);
+    front.quadraticCurveTo(cx - ow, cy - oh, cx - ow + r, cy - oh);
+    front.closePath();
+  };
+  opening();
+  front.save(); front.clip();
+  front.fillStyle = "#3f1b18"; front.fillRect(cx - ow - 2, cy - oh - 2, ow * 2 + 4, oh * 2 + 4);
+  front.fillStyle = "#fffdf6"; front.fillRect(cx - ow - 2, cy - oh - 2, ow * 2 + 4, oh * 0.9);
+  front.fillStyle = "rgba(120,80,60,.16)";
+  front.fillRect(cx - ow - 2, cy - oh * 0.12, ow * 2 + 4, 1.5);
+  front.strokeStyle = "rgba(170,150,132,.35)"; front.lineWidth = 0.8;
+  for (let i = 1; i < 6; i++) {
+    const x = cx - ow + (ow * 2) * i / 6;
+    front.beginPath(); front.moveTo(x, cy - oh); front.lineTo(x, cy - oh * 0.12); front.stroke();
+  }
+  front.beginPath();
+  front.ellipse(cx, cy + oh * 0.78, ow * 0.62, oh * 0.30, 0, 0, Math.PI * 2);
+  front.fillStyle = "#d97068"; front.fill();
+  front.restore();
+  opening(); front.strokeStyle = "rgba(120,50,45,.5)"; front.lineWidth = 1; front.stroke();
+
+  // protrusion cue: inner rim
+  if (prot > 0.55) {
+    opening();
+    front.strokeStyle = `rgba(168,70,62,${0.2 + 0.5 * (prot - 0.55)})`;
+    front.lineWidth = 2.4; front.stroke();
+  }
+  front.fillStyle = "#8a7264";
+  front.font = "11px -apple-system, sans-serif";
+  front.textAlign = "center";
+  front.fillText(`round ${round.toFixed(2)} · spread ${spread.toFixed(2)} · prot ${prot.toFixed(2)}`, cx, h - 8);
+}
+
+function drawSide() {
+  const w = sideC.width, h = sideC.height, p = S.params;
+  side.clearRect(0, 0, w, h);
+  side.fillStyle = "#fff"; side.fillRect(0, 0, w, h);
+  const prot = p.prot, round = p.round, spread = p.spread;
+  const ap = clamp(p.aperture, 0, 0.12);
+  const y0 = 100;
+  const fwd = (prot - 0.5) * 44;          // + = forward (left)
+  const xLip = 104 - fwd;
+  const open = 2 + ap * 170;
+  const lipT = (11 + 8 * round) * (1.2 - 0.4 * spread);
+  const upY = y0 - open / 2, loY = y0 + open / 2;
+
+  // face profile: bridge → nose → upper lip root, and chin
+  side.strokeStyle = "#dcc7b8"; side.lineWidth = 2; side.lineJoin = "round";
+  side.beginPath();
+  side.moveTo(190, 34);
+  side.bezierCurveTo(158, 44, 138, 54, 132, 64);
+  side.bezierCurveTo(124, 71, 118, 75, 120, 80);
+  side.bezierCurveTo(126, 84, 138, 85, 146, 85);
+  side.stroke();
+  side.beginPath();
+  side.moveTo(148, loY + lipT + 6);
+  side.bezierCurveTo(146, loY + lipT + 32, 150, loY + lipT + 52, 170, loY + lipT + 62);
+  side.stroke();
+
+  // neutral lip position (reference)
+  side.setLineDash([3, 4]); side.strokeStyle = "#e6d3c5";
+  side.beginPath(); side.moveTo(104, y0 - 30); side.lineTo(104, y0 + 30); side.stroke();
+  side.setLineDash([]);
+
+  // mouth cavity (behind the lips)
+  side.fillStyle = "#4a1f1b";
+  side.fillRect(xLip + 2, upY, 146 - (xLip + 2), Math.max(open, 1.5));
+  side.fillStyle = "#fffdf6";
+  side.fillRect(xLip + 6, upY + 0.5, 32, Math.min(4, Math.max(1, open * 0.35)));
+  side.fillStyle = "rgba(74,31,27,.35)";
+  side.fillRect(xLip + 6, upY + Math.min(4, Math.max(1, open * 0.35)) + 0.5, 32, 1);
+
+  // upper lip
+  side.beginPath();
+  side.moveTo(146, upY - lipT);
+  side.bezierCurveTo(130, upY - lipT * 1.2, xLip + 6, upY - lipT * 0.85, xLip, upY - lipT * 0.1);
+  side.bezierCurveTo(xLip + 8, upY + 2, 136, upY + 3, 146, upY + 1);
+  side.closePath();
+  side.fillStyle = "#f0a49b"; side.fill();
+  side.strokeStyle = "#a8463e"; side.lineWidth = 1.3; side.stroke();
+
+  // lower lip
+  side.beginPath();
+  side.moveTo(148, loY + lipT * 1.05);
+  side.bezierCurveTo(130, loY + lipT * 1.25, xLip + 6, loY + lipT * 0.9, xLip, loY + lipT * 0.1);
+  side.bezierCurveTo(xLip + 8, loY - 2, 138, loY - 3, 148, loY - 1);
+  side.closePath();
+  side.fillStyle = "#e07b73"; side.fill(); side.stroke();
+
+  // protrusion arrow
+  if (Math.abs(fwd) > 2) {
+    side.strokeStyle = "#be123c"; side.lineWidth = 1.4;
+    side.beginPath(); side.moveTo(104, y0 - 34); side.lineTo(xLip, y0 - 34); side.stroke();
+    const dir = Math.sign(fwd);
+    side.beginPath();
+    side.moveTo(xLip, y0 - 34); side.lineTo(xLip + 6 * dir, y0 - 37);
+    side.lineTo(xLip + 6 * dir, y0 - 31); side.closePath();
+    side.fillStyle = "#be123c"; side.fill();
+  }
+
+  side.fillStyle = "#8a7264";
+  side.font = "11px -apple-system, sans-serif";
+  side.textAlign = "center";
+  side.fillText(`aperture ${(ap * 100).toFixed(0)} · forward ${((prot - 0.5) * 100).toFixed(0)}`, w / 2, h - 8);
+}
+
+function drawChart() {
+  const w = chartC.width, h = chartC.height;
+  chart.clearRect(0, 0, w, h);
+  chart.fillStyle = "#fff"; chart.fillRect(0, 0, w, h);
+  const padL = 8, padR = 8, padT = 10, padB = 16;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  chart.strokeStyle = "#f1e8e0"; chart.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + plotH * i / 4;
+    chart.beginPath(); chart.moveTo(padL, y); chart.lineTo(w - padR, y); chart.stroke();
+  }
+  const now = performance.now() / 1000, span = 12;
+  const series = [
+    ["round", "#6d28d9"], ["spread", "#2563eb"], ["prot", "#be123c"],
+    ["jaw", "#0f766e"], ["ap", "#b45309"]
+  ];
+  for (const [key, color] of series) {
+    chart.beginPath();
+    let started = false;
+    for (const s of S.hist) {
+      const x = padL + (1 - (now - s.t) / span) * plotW;
+      if (x < padL) continue;
+      const v = key === "ap" ? clamp(s.ap * 2, 0, 1) : clamp(s[key], 0, 1);
+      const y = padT + plotH * (1 - v);
+      if (!started) { chart.moveTo(x, y); started = true; } else chart.lineTo(x, y);
+    }
+    chart.strokeStyle = color; chart.lineWidth = 1.8; chart.stroke();
+  }
+  chart.fillStyle = "#b9a99d"; chart.font = "10px ui-monospace, Menlo, monospace";
+  chart.textAlign = "left"; chart.fillText("1.0", padL + 2, padT + 9);
+  chart.fillText("0.0", padL + 2, h - 4);
+}
+
+function updateMeters() {
+  const p = S.params;
+  const set = (id, v, label, digits = 2) => {
+    $(id).style.width = `${clamp(v, 0, 1) * 100}%`;
+    $(label).textContent = v.toFixed(digits);
+  };
+  set("mAperture", clamp(p.aperture * 4, 0, 1), "vAperture");
+  set("mRound", p.round, "vRound");
+  set("mSpread", p.spread, "vSpread");
+  set("mProt", p.prot, "vProt");
+  set("mJaw", p.jaw, "vJaw");
+  set("mWidth", clamp((p.widthN - 0.7) / 0.6, 0, 1), "vWidth", 2);
+  $("vWidth").textContent = p.widthN.toFixed(2) + "×";
+
+  const r = S.raw;
+  $("rAp").textContent = fmt(r.aperture);
+  $("rW").textContent = fmt(r.width);
+  $("rZ").textContent = fmt(r.zRel, 4);
+  $("rFps").textContent = String(S.fps);
+  $("rPucker").textContent = fmt(r.pucker, 2);
+  $("rFunnel").textContent = fmt(r.funnel, 2);
+  $("rStretch").textContent = fmt(r.stretch, 2);
+  $("rSmile").textContent = fmt(r.smile, 2);
+  $("rRoll").textContent = `${r.rollU.toFixed(2)}/${r.rollL.toFixed(2)}`;
+  $("rJaw").textContent = fmt(r.jawOpen, 2);
+  const n = S.neutral;
+  $("rYaw").textContent = fmt(r.yaw - (n ? n.yaw : 0), 3);
+  $("rPitch").textContent = fmt(r.pitch - (n ? n.pitch : 0), 3);
+}
+
+/* ------------------------------ loop -------------------------------- */
+
+function onFace(res) {
+  S.lm = res.faceLandmarks[0];
+  const cat = res.faceBlendshapes && res.faceBlendshapes[0];
+  S.bs = {};
+  if (cat) for (const c of cat.categories) S.bs[c.categoryName] = c.score;
+
+  const f = measure(S.lm, S.bs);
+  S.feat = f;
+  S.raw = f;
+
+  if (!S.neutral) {
+    S.neutralSamples.push(f);
+    S.autoNeutralFrames++;
+    if (S.neutralSamples.length >= 30) {
+      const med = (k) => median(S.neutralSamples.map(x => x[k]));
+      captureNeutral({
+        aperture: med("aperture"), width: med("width"), zRel: med("zRel"),
+        pucker: med("pucker"), funnel: med("funnel"), rollU: med("rollU"),
+        rollL: med("rollL"), stretch: med("stretch"), smile: med("smile"),
+        jawOpen: med("jawOpen"), yaw: med("yaw"), pitch: med("pitch")
+      });
+      log("auto-neutral from first 30 frames — re-set with a relaxed face for accuracy");
+    }
+  }
+  if (S.neutralUntil && performance.now() < S.neutralUntil) {
+    S.neutralSamples.push(f);
+  } else if (S.neutralUntil) {
+    S.neutralUntil = 0;
+    const med = (k) => median(S.neutralSamples.map(x => x[k]));
+    captureNeutral({
+      aperture: med("aperture"), width: med("width"), zRel: med("zRel"),
+      pucker: med("pucker"), funnel: med("funnel"), rollU: med("rollU"),
+      rollL: med("rollL"), stretch: med("stretch"), smile: med("smile"),
+      jawOpen: med("jawOpen"), yaw: med("yaw"), pitch: med("pitch")
+    });
+    S.neutralSamples = [];
+  }
+
+  if (S.neutral) {
+    const p = derive(f, S.neutral);
+    const a = 0.35;
+    S.params.aperture += (p.aperture - S.params.aperture) * a;
+    S.params.widthN += (p.widthN - S.params.widthN) * a;
+    S.params.round += (p.round - S.params.round) * a;
+    S.params.spread += (p.spread - S.params.spread) * a;
+    S.params.prot += (p.prot - S.params.prot) * a;
+    S.params.jaw += (p.jaw - S.params.jaw) * a;
+  }
+
+  if (!S.firstFaceLogged) {
+    S.firstFaceLogged = true;
+    log("first face detected");
+  }
+  S.noFace = 0;
+  S.frames++;
+  drawOverlay();
+
+  const now = performance.now();
+  if (now - S.lastUi > 60) {
+    S.lastUi = now;
+    updateMeters();
+    drawFront(); drawSide();
+    setState("tracking", "on");
+    $("statusText").textContent = "Face tracked. Move slowly; keep the head straight.";
+  }
+  S.hist.push({ t: now / 1000, round: S.params.round, spread: S.params.spread,
+                prot: S.params.prot, jaw: S.params.jaw, ap: S.params.aperture });
+  if (S.hist.length > 900) S.hist.splice(0, S.hist.length - 900);
+
+  if (S.rec.on && now - S.lastRec > 66) {
+    S.lastRec = now;
+    S.rec.rows.push([
+      Math.round(now - S.rec.t0),
+      f.aperture.toFixed(5), (f.aperture / S.neutral.aperture).toFixed(4),
+      f.width.toFixed(5), (f.width / S.neutral.width).toFixed(4),
+      S.params.round.toFixed(4), S.params.spread.toFixed(4), S.params.prot.toFixed(4),
+      S.params.jaw.toFixed(4),
+      f.jawOpen.toFixed(4), f.pucker.toFixed(4), f.funnel.toFixed(4),
+      f.stretch.toFixed(4), f.smile.toFixed(4),
+      f.rollU.toFixed(4), f.rollL.toFixed(4), f.zRel.toFixed(5),
+      f.yaw.toFixed(5), f.pitch.toFixed(5), String(S.fps)
+    ].join(","));
+  }
+}
+
+function onNoFace() {
+  S.lm = null;
+  S.noFace++;
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  if (S.noFace === 10) {
+    setState("no face", "warn");
+    $("statusText").textContent = "No face detected. Face the camera in even light.";
+    log("no face detected");
+  }
+}
+
+function detectOnce() {
+  if (!S.landmarker || video.readyState < 2) return;
+  try {
+    const res = S.landmarker.detectForVideo(video, performance.now());
+    if (res.faceLandmarks && res.faceLandmarks.length) onFace(res);
+    else onNoFace();
+  } catch (e) {
+    log("detect error: " + e.message);
+  }
+}
+
+/* Prefer requestVideoFrameCallback: exactly one detection per presented frame,
+   which avoids double-counting on 60 Hz displays. */
+function schedule() {
+  if (!S.running) return;
+  if (typeof video.requestVideoFrameCallback === "function") {
+    video.requestVideoFrameCallback(onFrame);
+  } else {
+    requestAnimationFrame(onFrame);
+  }
+}
+
+function onFrame() {
+  if (!S.running) return;
+  detectOnce();
+  const now = performance.now();
+  if (now - S.fpsT >= 1000) { S.fps = S.frames; S.frames = 0; S.fpsT = now; }
+  drawChart();
+  schedule();
+}
+
+/* ------------------------------ controls ---------------------------- */
+
+async function start() {
+  $("btnStart").disabled = true;
+  setState("starting", "warn");
+  $("statusText").textContent = "Requesting camera and loading model…";
+  try {
+    await startCamera();
+    if (!S.modelReady) await loadModel();
+    S.running = true;
+    S.lastVideoTime = -1;
+    $("btnStop").disabled = false;
+    $("btnNeutral").disabled = false;
+    $("btnRec").disabled = false;
+    setState("running", "on");
+    $("statusText").textContent = "Loading model…";
+    log("running");
+    S.fpsT = performance.now();
+    S.frames = 0;
+    schedule();
+  } catch (e) {
+    log("ERROR: " + e.message);
+    setState("error", "err");
+    $("statusText").textContent = e.message;
+    $("btnStart").disabled = false;
+    stopCamera();
+  }
+}
+
+function stop() {
+  S.running = false;
+  stopCamera();
+  $("btnStart").disabled = false;
+  $("btnStop").disabled = true;
+  $("btnNeutral").disabled = true;
+  $("btnRec").disabled = true;
+  setState("idle", "");
+  $("statusText").textContent = "Camera off.";
+  log("stopped");
+}
+
+$("btnStart").addEventListener("click", start);
+$("btnStop").addEventListener("click", stop);
+$("btnNeutral").addEventListener("click", () => {
+  if (!S.feat) return;
+  S.neutralSamples = [];
+  S.neutralUntil = performance.now() + 1000;
+  $("btnNeutral").textContent = "Capturing…";
+  log("capturing neutral (1 s) — hold a relaxed face");
+});
+$("btnRec").addEventListener("click", () => {
+  S.rec.on = !S.rec.on;
+  const btn = $("btnRec");
+  if (S.rec.on) {
+    S.rec.rows = [];
+    S.rec.t0 = performance.now();
+    S.lastRec = 0;
+    btn.textContent = "Stop recording";
+    btn.classList.add("rec");
+    log("recording → CSV");
+  } else {
+    btn.textContent = "Record CSV";
+    btn.classList.remove("rec");
+    $("btnDownload").disabled = S.rec.rows.length === 0;
+    log(`recording stopped (${S.rec.rows.length} rows)`);
+  }
+});
+$("btnDownload").addEventListener("click", () => {
+  const head = "t_ms,aperture,aperture_rel,width,width_rel,round,spread,prot,jaw,jawOpen,pucker,funnel,stretch,smile,rollU,rollL,zRel,yaw,pitch,fps";
+  const blob = new Blob([head + "\n" + S.rec.rows.join("\n") + "\n"], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `lip-lab-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$("device").addEventListener("change", () => {
+  if (S.running) { stop(); start(); }
+});
+
+// draw placeholders
+drawFront(); drawSide(); drawChart();
+updateMeters();
+
+// autostart hook for headless testing
+if (new URLSearchParams(location.search).get("autostart") === "1") {
+  setTimeout(start, 300);
+}
+window.__lipLab = { S, start, stop, derive, drawFront, drawSide };
+</script>
+</body>
+</html>
